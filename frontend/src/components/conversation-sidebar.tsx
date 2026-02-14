@@ -94,16 +94,34 @@ export function ConversationSidebar({
                   layout
                   initial={{ opacity: 0, y: -8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, height: 0, marginTop: 0 }}
+                  exit={{
+                    opacity: 0,
+                    x: -20,
+                    height: 0,
+                    marginTop: 0,
+                    transition: { duration: 0.2, ease: "easeIn" },
+                  }}
                   transition={{ duration: 0.15 }}
                   onClick={() => onSelect(conv.id)}
+                  whileHover={{
+                    backgroundColor: conv.id === activeId ? undefined : "var(--accent)",
+                    transition: { duration: 0.15 },
+                  }}
                   className={[
                     "group relative flex w-full cursor-pointer flex-col gap-0.5 rounded-md px-3 py-2 text-left transition-colors",
                     conv.id === activeId
                       ? "bg-accent text-accent-foreground"
-                      : "text-foreground hover:bg-accent/50",
+                      : "text-foreground",
                   ].join(" ")}
                 >
+                  {/* Active indicator bar */}
+                  {conv.id === activeId && (
+                    <motion.div
+                      layoutId="activeSidebarItem"
+                      className="absolute left-0 top-1 bottom-1 w-[3px] rounded-full bg-primary"
+                      transition={{ type: "spring", stiffness: 400, damping: 28 }}
+                    />
+                  )}
                   <span className="truncate text-sm font-medium leading-snug">
                     {conv.title || "Untitled"}
                   </span>

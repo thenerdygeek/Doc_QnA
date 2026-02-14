@@ -204,8 +204,10 @@ vi.mock("framer-motion", () => ({
   motion: {
     div: ({ children, ...rest }: any) => <div {...rest}>{children}</div>,
     span: ({ children, ...rest }: any) => <span {...rest}>{children}</span>,
+    header: ({ children, ...rest }: any) => <header {...rest}>{children}</header>,
   },
   AnimatePresence: ({ children }: any) => <>{children}</>,
+  useReducedMotion: () => false,
 }));
 
 vi.mock("lucide-react", () => ({

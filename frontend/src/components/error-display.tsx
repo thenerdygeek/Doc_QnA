@@ -1,4 +1,4 @@
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { AlertTriangle, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -8,11 +8,21 @@ interface ErrorDisplayProps {
 }
 
 export function ErrorDisplay({ error, onRetry }: ErrorDisplayProps) {
+  const prefersReduced = useReducedMotion();
+
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.98 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.2 }}
+      animate={
+        prefersReduced
+          ? { opacity: 1, scale: 1 }
+          : {
+              opacity: 1,
+              scale: 1,
+              x: [0, -4, 4, -2, 2, 0],
+            }
+      }
+      transition={{ duration: 0.4 }}
       className="flex items-start gap-3 rounded-xl border border-destructive/20 bg-destructive/5 p-4"
       role="alert"
     >
@@ -32,7 +42,7 @@ export function ErrorDisplay({ error, onRetry }: ErrorDisplayProps) {
           variant="outline"
           size="sm"
           onClick={onRetry}
-          className="shrink-0"
+          className="retry-glow shrink-0"
           aria-label="Retry question"
         >
           <RotateCcw className="mr-1.5 h-3 w-3" />

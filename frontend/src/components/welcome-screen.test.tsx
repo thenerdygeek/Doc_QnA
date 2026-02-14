@@ -24,6 +24,7 @@ vi.mock("framer-motion", () => ({
           k === "className" ||
           k === "type" ||
           k === "onClick" ||
+          k === "onMouseMove" ||
           k === "role" ||
           k.startsWith("aria-") ||
           k.startsWith("data-")
@@ -37,8 +38,10 @@ vi.mock("framer-motion", () => ({
         </button>
       );
     },
+    span: ({ children }: React.PropsWithChildren) => <span>{children}</span>,
   },
   AnimatePresence: ({ children }: React.PropsWithChildren) => <>{children}</>,
+  useReducedMotion: () => true,
 }));
 
 // ── Mock API client ─────────────────────────────────────────────
@@ -79,7 +82,7 @@ describe("WelcomeScreen", () => {
     mockStats.mockResolvedValue(defaultStats);
     await renderWelcome();
     expect(
-      screen.getByText(/Get verified answers from your indexed documentation/),
+      screen.getByText(/Ask anything about your documentation/),
     ).toBeInTheDocument();
   });
 
@@ -198,16 +201,16 @@ describe("WelcomeScreen", () => {
     ).toBeInTheDocument();
   });
 
-  it('decorative orb has aria-hidden="true"', async () => {
+  it('decorative orbs have aria-hidden="true"', async () => {
     mockStats.mockResolvedValue(defaultStats);
     const { container } = await renderWelcome();
     const hiddenEls = container.querySelectorAll('[aria-hidden="true"]');
     expect(hiddenEls.length).toBeGreaterThanOrEqual(1);
-    // The decorative orb should contain the blur div
-    const orb = Array.from(hiddenEls).find((el) =>
-      el.querySelector(".blur-3xl"),
+    // The decorative orb container should contain the animated orbs
+    const orbContainer = Array.from(hiddenEls).find((el) =>
+      el.querySelector(".orb"),
     );
-    expect(orb).toBeInTheDocument();
+    expect(orbContainer).toBeInTheDocument();
   });
 
   it("chunk count uses toLocaleString formatting", async () => {

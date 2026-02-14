@@ -26,6 +26,11 @@ def _compute_file_hash(file_path: str) -> str:
     return h.hexdigest()
 
 
+def _normalize_path(file_path: str) -> str:
+    """Normalize file path to forward slashes for cross-platform consistency."""
+    return file_path.replace("\\", "/")
+
+
 class DocIndex:
     """Manages the LanceDB vector store for document chunks.
 
@@ -115,19 +120,22 @@ class DocIndex:
             Tuple of (new_files, changed_files, deleted_files).
         """
         indexed = self.get_indexed_file_hashes()
-        current_set = set(file_paths)
+        # Build lookup with normalized paths for cross-platform consistency.
+        # Indexed paths are already normalized (stored with forward slashes).
+        norm_to_orig = {_normalize_path(fp): fp for fp in file_paths}
+        current_set = set(norm_to_orig.keys())
         indexed_set = set(indexed.keys())
 
         new_files: list[str] = []
         changed_files: list[str] = []
 
-        for fp in file_paths:
-            if fp not in indexed_set:
-                new_files.append(fp)
+        for norm_fp, orig_fp in norm_to_orig.items():
+            if norm_fp not in indexed_set:
+                new_files.append(orig_fp)
             else:
-                current_hash = _compute_file_hash(fp)
-                if current_hash != indexed[fp]:
-                    changed_files.append(fp)
+                current_hash = _compute_file_hash(orig_fp)
+                if current_hash != indexed[norm_fp]:
+                    changed_files.append(orig_fp)
 
         deleted_files = list(indexed_set - current_set)
 
@@ -142,7 +150,7 @@ class DocIndex:
     def delete_file_chunks(self, file_path: str) -> int:
         """Delete all chunks for a specific file. Returns count deleted."""
         before = self._table.count_rows()
-        safe_path = file_path.replace('"', '\\"')
+        safe_path = _normalize_path(file_path).replace("\\", "\\\\").replace('"', '\\"')
         self._table.delete(f'file_path = "{safe_path}"')
         after = self._table.count_rows()
         deleted = before - after
@@ -174,7 +182,7 @@ class DocIndex:
                 "chunk_id": chunk.chunk_id,
                 "text": chunk.text,
                 "vector": vector.tolist(),
-                "file_path": chunk.file_path,
+                "file_path": _normalize_path(chunk.file_path),
                 "file_type": chunk.file_type,
                 "section_title": chunk.section_title,
                 "section_level": chunk.section_level,
@@ -200,20 +208,21 @@ class DocIndex:
             Number of chunks added.
         """
         file_hash = _compute_file_hash(file_path)
+        norm_path = _normalize_path(file_path)
 
         # Snapshot existing rows for this file so we can restore on failure.
         backup_rows: list[dict] | None = None
         if self._table.count_rows() > 0:
             try:
                 at = self._table.to_arrow()
-                mask = pc.equal(at.column("file_path"), file_path)
+                mask = pc.equal(at.column("file_path"), norm_path)
                 filtered = at.filter(mask)
                 if filtered.num_rows > 0:
                     backup_rows = filtered.to_pylist()
             except Exception:
                 backup_rows = None
 
-        self.delete_file_chunks(file_path)
+        self.delete_file_chunks(norm_path)
         try:
             return self.add_chunks(chunks, file_hash)
         except Exception:

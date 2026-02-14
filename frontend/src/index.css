@@ -457,6 +457,306 @@ html.transitioning *::after {
   background: oklch(0.40 0.02 265);
 }
 
+/* ── Welcome screen animated orbs ──────────────────────────── */
+.orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(80px);
+  opacity: 0.5;
+  will-change: transform;
+}
+
+.orb-1 {
+  width: 280px;
+  height: 280px;
+  background: oklch(0.50 0.18 265 / 0.15);
+  top: 15%;
+  left: 35%;
+  animation: orb-drift-1 14s ease-in-out infinite;
+}
+
+.orb-2 {
+  width: 220px;
+  height: 220px;
+  background: oklch(0.55 0.20 290 / 0.12);
+  top: 40%;
+  left: 55%;
+  animation: orb-drift-2 18s ease-in-out infinite;
+}
+
+.orb-3 {
+  width: 180px;
+  height: 180px;
+  background: oklch(0.55 0.15 240 / 0.10);
+  top: 25%;
+  left: 20%;
+  animation: orb-drift-3 16s ease-in-out infinite;
+}
+
+.dark .orb-1 { background: oklch(0.45 0.18 265 / 0.20); }
+.dark .orb-2 { background: oklch(0.50 0.20 290 / 0.15); }
+.dark .orb-3 { background: oklch(0.50 0.15 240 / 0.12); }
+
+@keyframes orb-drift-1 {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  33% { transform: translate3d(30px, -20px, 0); }
+  66% { transform: translate3d(-20px, 15px, 0); }
+}
+
+@keyframes orb-drift-2 {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  33% { transform: translate3d(-25px, 25px, 0); }
+  66% { transform: translate3d(20px, -30px, 0); }
+}
+
+@keyframes orb-drift-3 {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  33% { transform: translate3d(20px, 20px, 0); }
+  66% { transform: translate3d(-30px, -10px, 0); }
+}
+
+/* ── Card hover glow (follows cursor) ─────────────────────── */
+.card-glow {
+  position: relative;
+  overflow: hidden;
+}
+
+.card-glow::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.3s;
+  background: radial-gradient(
+    200px circle at var(--glow-x, 50%) var(--glow-y, 50%),
+    oklch(0.55 0.18 265 / 0.10),
+    transparent 70%
+  );
+  pointer-events: none;
+}
+
+.card-glow:hover::before {
+  opacity: 1;
+}
+
+.dark .card-glow::before {
+  background: radial-gradient(
+    200px circle at var(--glow-x, 50%) var(--glow-y, 50%),
+    oklch(0.70 0.14 265 / 0.12),
+    transparent 70%
+  );
+}
+
+/* ── Chat input animated focus ring ───────────────────────── */
+.input-focus-ring {
+  position: relative;
+}
+
+.input-focus-ring::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: linear-gradient(
+    var(--focus-ring-angle, 0deg),
+    oklch(0.55 0.18 265 / 0.6),
+    oklch(0.55 0.20 290 / 0.6),
+    oklch(0.55 0.18 265 / 0.6)
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+
+.input-focus-ring:focus-within::before {
+  opacity: 1;
+  animation: focus-ring-spin 3s linear infinite;
+}
+
+@keyframes focus-ring-spin {
+  to { --focus-ring-angle: 360deg; }
+}
+
+@property --focus-ring-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+/* ── Submit ripple ────────────────────────────────────────── */
+.submit-ripple {
+  position: relative;
+  overflow: hidden;
+}
+
+.submit-ripple::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(circle, oklch(1 0 0 / 0.3) 0%, transparent 70%);
+  transform: scale(0);
+  opacity: 0;
+}
+
+.submit-ripple.rippling::after {
+  animation: ripple-burst 0.6s ease-out forwards;
+}
+
+@keyframes ripple-burst {
+  0% { transform: scale(0); opacity: 1; }
+  100% { transform: scale(2.5); opacity: 0; }
+}
+
+/* ── Avatar glow during streaming ─────────────────────────── */
+.avatar-streaming {
+  animation: avatar-glow 2s ease-in-out infinite;
+}
+
+@keyframes avatar-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 oklch(0.55 0.18 265 / 0.4);
+  }
+  50% {
+    box-shadow: 0 0 12px 4px oklch(0.55 0.18 265 / 0.25);
+  }
+}
+
+.dark .avatar-streaming {
+  animation: avatar-glow-dark 2s ease-in-out infinite;
+}
+
+@keyframes avatar-glow-dark {
+  0%, 100% {
+    box-shadow: 0 0 0 0 oklch(0.70 0.14 265 / 0.4);
+  }
+  50% {
+    box-shadow: 0 0 14px 5px oklch(0.70 0.14 265 / 0.3);
+  }
+}
+
+/* ── Skeleton shimmer ─────────────────────────────────────── */
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    oklch(0.93 0.008 265 / 0.6) 25%,
+    oklch(0.96 0.005 265 / 0.8) 50%,
+    oklch(0.93 0.008 265 / 0.6) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer-sweep 1.5s ease-in-out infinite;
+  border-radius: 6px;
+}
+
+.dark .skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    oklch(0.22 0.02 265 / 0.6) 25%,
+    oklch(0.28 0.02 265 / 0.8) 50%,
+    oklch(0.22 0.02 265 / 0.6) 75%
+  );
+  background-size: 200% 100%;
+}
+
+@keyframes shimmer-sweep {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ── Verified badge shimmer ───────────────────────────────── */
+.verified-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.verified-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    110deg,
+    transparent 30%,
+    oklch(1 0 0 / 0.15) 50%,
+    transparent 70%
+  );
+  animation: shimmer-once 1.2s ease-out 0.3s forwards;
+  opacity: 0;
+}
+
+@keyframes shimmer-once {
+  0% { transform: translateX(-100%); opacity: 1; }
+  100% { transform: translateX(100%); opacity: 0; }
+}
+
+/* ── Error shake ──────────────────────────────────────────── */
+@keyframes error-shake {
+  0%, 100% { transform: translateX(0); }
+  15% { transform: translateX(-4px); }
+  30% { transform: translateX(4px); }
+  45% { transform: translateX(-2px); }
+  60% { transform: translateX(2px); }
+  75% { transform: translateX(0); }
+}
+
+/* ── Retry button pulse glow ──────────────────────────────── */
+.retry-glow {
+  animation: retry-pulse 2s ease-in-out infinite;
+}
+
+@keyframes retry-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 oklch(0.55 0.22 27 / 0.3);
+  }
+  50% {
+    box-shadow: 0 0 8px 3px oklch(0.55 0.22 27 / 0.15);
+  }
+}
+
+/* ── Pipeline stepper ─────────────────────────────────────── */
+.step-dot-active {
+  animation: step-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes step-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 oklch(0.55 0.18 265 / 0.4);
+  }
+  50% {
+    box-shadow: 0 0 8px 3px oklch(0.55 0.18 265 / 0.2);
+  }
+}
+
+.dark .step-dot-active {
+  animation: step-pulse-dark 1.5s ease-in-out infinite;
+}
+
+@keyframes step-pulse-dark {
+  0%, 100% {
+    box-shadow: 0 0 0 0 oklch(0.70 0.14 265 / 0.4);
+  }
+  50% {
+    box-shadow: 0 0 8px 3px oklch(0.70 0.14 265 / 0.2);
+  }
+}
+
+/* ── Reduced motion: disable all new animations ───────────── */
+@media (prefers-reduced-motion: reduce) {
+  .orb { animation: none !important; }
+  .card-glow::before { display: none; }
+  .input-focus-ring::before { animation: none; }
+  .submit-ripple::after { display: none; }
+  .avatar-streaming { animation: none !important; }
+  .skeleton-shimmer { animation: none !important; }
+  .verified-shimmer::after { display: none; }
+  .step-dot-active { animation: none !important; }
+  .retry-glow { animation: none !important; }
+}
+
 /* ── Selection ───────────────────────────────────────────────── */
 ::selection {
   background: oklch(0.52 0.18 265 / 0.2);

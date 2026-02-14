@@ -1,5 +1,18 @@
 import { render, screen } from "@testing-library/react";
+import { vi } from "vitest";
 import { ConfidenceBadge } from "./confidence-badge";
+
+vi.mock("framer-motion", () => ({
+  motion: {
+    span: ({
+      children,
+      className,
+    }: React.PropsWithChildren<{ className?: string }>) => (
+      <span className={className}>{children}</span>
+    ),
+  },
+  useReducedMotion: () => false,
+}));
 
 describe("ConfidenceBadge", () => {
   it("renders 'Verified' when passed is true", () => {

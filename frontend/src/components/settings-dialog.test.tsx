@@ -204,8 +204,15 @@ vi.mock("framer-motion", () => ({
       const s = safeProps(props);
       return <div {...(s as React.HTMLAttributes<HTMLDivElement>)}>{children}</div>;
     },
+    span: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) => {
+      const s = safeProps(props);
+      return <span {...(s as React.HTMLAttributes<HTMLSpanElement>)}>{children}</span>;
+    },
+    svg: ({ children }: React.PropsWithChildren) => <svg>{children}</svg>,
+    path: () => <path />,
   },
   AnimatePresence: ({ children }: React.PropsWithChildren) => <>{children}</>,
+  useReducedMotion: () => false,
 }));
 
 // ── CVA mock (used by Button and Badge) ────────────────────────────

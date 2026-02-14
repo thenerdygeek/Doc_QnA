@@ -14,6 +14,12 @@ function scoreColor(score: number): string {
   return "bg-orange-500";
 }
 
+function scoreBarColor(score: number): string {
+  if (score >= 0.8) return "bg-emerald-500/60";
+  if (score >= 0.6) return "bg-amber-500/60";
+  return "bg-orange-500/60";
+}
+
 /** Extract just the filename from a full path. */
 function fileName(filePath: string): string {
   return filePath.split("/").pop() ?? filePath;
@@ -39,7 +45,12 @@ export function SourcesList({ sources }: SourcesListProps) {
   }
 
   return (
-    <div className="space-y-2.5">
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35, ease: "easeOut" }}
+      className="space-y-2.5"
+    >
       <h4 className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
         <FileText className="h-3 w-3" />
         Sources
@@ -71,24 +82,35 @@ export function SourcesList({ sources }: SourcesListProps) {
                 {fileName(source.file_path)}
               </p>
             </div>
-            <div className="flex shrink-0 items-center gap-1.5">
-              <span
-                className={`h-1.5 w-1.5 rounded-full ${scoreColor(source.score)}`}
-              />
-              <span className="font-mono text-xs text-muted-foreground">
-                {Math.round(source.score * 100)}%
-              </span>
-              <ExternalLink
-                className={`ml-0.5 h-3 w-3 transition-all ${
-                  opening === i
-                    ? "text-primary"
-                    : "text-transparent group-hover:text-muted-foreground"
-                }`}
-              />
+            <div className="flex shrink-0 flex-col items-end gap-1">
+              <div className="flex items-center gap-1.5">
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${scoreColor(source.score)}`}
+                />
+                <span className="font-mono text-xs text-muted-foreground">
+                  {Math.round(source.score * 100)}%
+                </span>
+                <ExternalLink
+                  className={`ml-0.5 h-3 w-3 transition-all ${
+                    opening === i
+                      ? "text-primary"
+                      : "text-transparent group-hover:text-muted-foreground"
+                  }`}
+                />
+              </div>
+              {/* Score bar */}
+              <div className="h-1 w-12 overflow-hidden rounded-full bg-muted/50">
+                <motion.div
+                  initial={{ width: 0 }}
+                  animate={{ width: `${Math.round(source.score * 100)}%` }}
+                  transition={{ delay: 0.2 + i * 0.05, duration: 0.5, ease: "easeOut" }}
+                  className={`h-full rounded-full ${scoreBarColor(source.score)}`}
+                />
+              </div>
             </div>
           </motion.button>
         ))}
       </div>
-    </div>
+    </motion.div>
   );
 }

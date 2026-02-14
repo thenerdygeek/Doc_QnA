@@ -10,7 +10,11 @@ vi.mock("framer-motion", () => {
       const Tag = tag as keyof JSX.IntrinsicElements;
       return <Tag className={className as string} onClick={rest.onClick as React.MouseEventHandler}>{children}</Tag>;
     };
-  return { motion: { div: stub("div"), button: stub("button") } };
+  return {
+    motion: { div: stub("div"), button: stub("button") },
+    AnimatePresence: ({ children }: React.PropsWithChildren) => <>{children}</>,
+    useReducedMotion: () => false,
+  };
 });
 
 vi.mock("@/api/client", () => ({

@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import gc
 import logging
 import shutil
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Coroutine
+
+_IS_WINDOWS = sys.platform == "win32"
 
 from doc_qa.config import AppConfig
 from doc_qa.indexing.chunker import Chunk, chunk_sections
@@ -55,6 +59,8 @@ class IndexingEvent:
 class SwapResult:
     index: DocIndex
     retriever: HybridRetriever
+    temp_db_path: str | None = None  # set on Windows for deferred cleanup
+    prod_db_path: str | None = None
 
 
 # ── Type alias for the on_swap callback ──────────────────────────
@@ -242,6 +248,10 @@ class IndexingJob:
             # Notify server to hot-swap references
             await on_swap(swap_result)
 
+            # Finalize directory renames (Windows deferred cleanup)
+            if swap_result.temp_db_path is not None:
+                await loop.run_in_executor(None, _finalize_swap_directories, swap_result)
+
             # ── Phase 5: Done ────────────────────────────────
             elapsed = round(time.time() - self._start_time, 1)
             self._state = IndexingState.done
@@ -307,42 +317,99 @@ def _atomic_swap(
     prod_db_path: str,
     embedding_model: str,
 ) -> SwapResult:
-    """Atomically replace the production index with the temp one.
+    """Replace the production index with the temp one.
 
-    Steps:
-    1. Rename prod → backup
-    2. Rename temp → prod
-    3. Open new DocIndex + HybridRetriever
-    4. Delete backup
+    On Unix: atomic rename (prod → backup, temp → prod), then open.
+    On Windows: open directly from temp path (avoids PermissionError from
+    file locks), deferring directory renames to ``_finalize_swap_directories``
+    after the old DocIndex references are released.
     """
     prod = Path(prod_db_path)
     temp = Path(temp_db_path)
     backup = Path(f"{prod_db_path}_backup")
 
-    # Remove stale backup if present
+    if _IS_WINDOWS:
+        # Phase 1: open new index directly from temp — no renames yet.
+        new_index = DocIndex(db_path=temp_db_path, embedding_model=embedding_model)
+        new_retriever = HybridRetriever(
+            table=new_index._table,
+            embedding_model=embedding_model,
+        )
+        logger.info("Swap phase 1 (Windows): opened index from %s", temp_db_path)
+        return SwapResult(
+            index=new_index,
+            retriever=new_retriever,
+            temp_db_path=temp_db_path,
+            prod_db_path=prod_db_path,
+        )
+
+    # Unix path: atomic renames are safe regardless of open handles.
     if backup.exists():
         shutil.rmtree(backup)
-
-    # Rename prod → backup (may not exist on first index)
     if prod.exists():
         prod.rename(backup)
-
-    # Rename temp → prod
     temp.rename(prod)
 
-    # Open fresh index + retriever
     new_index = DocIndex(db_path=prod_db_path, embedding_model=embedding_model)
     new_retriever = HybridRetriever(
         table=new_index._table,
         embedding_model=embedding_model,
     )
 
-    # Clean up backup
     if backup.exists():
         shutil.rmtree(backup)
 
     logger.info("Atomic swap complete: %s → %s", temp_db_path, prod_db_path)
     return SwapResult(index=new_index, retriever=new_retriever)
+
+
+def _finalize_swap_directories(swap_result: SwapResult) -> None:
+    """Phase 2 (Windows only): rename directories after old references are released.
+
+    Called in executor after ``on_swap`` has replaced all references to the old
+    DocIndex/HybridRetriever, so file handles should now be closed.  Uses a
+    retry loop with ``gc.collect()`` to handle delayed handle release.
+    """
+    if swap_result.temp_db_path is None:
+        return  # Unix path — nothing to finalize.
+
+    temp = Path(swap_result.temp_db_path)
+    prod = Path(swap_result.prod_db_path)
+    backup = Path(f"{swap_result.prod_db_path}_backup")
+
+    # Force-close any lingering Python references.
+    gc.collect()
+
+    max_attempts = 5
+    for attempt in range(max_attempts):
+        try:
+            if backup.exists():
+                shutil.rmtree(backup)
+            if prod.exists():
+                prod.rename(backup)
+            if temp.exists():
+                temp.rename(prod)
+            # Clean up backup
+            if backup.exists():
+                shutil.rmtree(backup)
+            logger.info("Swap phase 2 (Windows): directories finalized.")
+            return
+        except PermissionError:
+            if attempt < max_attempts - 1:
+                gc.collect()
+                time.sleep(0.5 * (attempt + 1))
+                logger.debug(
+                    "Swap finalize retry %d/%d — waiting for file handles.",
+                    attempt + 1,
+                    max_attempts,
+                )
+            else:
+                logger.warning(
+                    "Could not finalize swap directories after %d attempts. "
+                    "Index is serving from temp path: %s",
+                    max_attempts,
+                    swap_result.temp_db_path,
+                )
 
 
 def _cleanup_temp(temp_db_path: str) -> None:

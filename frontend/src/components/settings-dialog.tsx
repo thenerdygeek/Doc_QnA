@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   CheckCircle,
   XCircle,
@@ -72,6 +72,46 @@ function SaveButton({ onClick, saving, saved }: { onClick: () => void; saving: b
       {saving && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
       {saved ? "Saved" : "Save"}
     </Button>
+  );
+}
+
+/** Animated green checkmark drawn via SVG pathLength */
+function AnimatedCheckmark() {
+  return (
+    <motion.svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="text-green-600 dark:text-green-400"
+    >
+      <motion.path
+        d="M5 12l5 5L20 7"
+        initial={{ pathLength: 0 }}
+        animate={{ pathLength: 1 }}
+        transition={{ duration: 0.4, ease: "easeOut" }}
+      />
+    </motion.svg>
+  );
+}
+
+/** Three pulsing dots for loading state */
+function LoadingDots() {
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      {[0, 1, 2].map((i) => (
+        <motion.span
+          key={i}
+          className="inline-block h-1.5 w-1.5 rounded-full bg-primary"
+          animate={{ opacity: [0.3, 1, 0.3] }}
+          transition={{ duration: 1, repeat: Infinity, delay: i * 0.2 }}
+        />
+      ))}
+    </span>
   );
 }
 
@@ -204,14 +244,16 @@ function DatabaseTab({ settings }: { settings: UseSettingsReturn }) {
 
       <div className="flex items-center gap-2">
         <Button size="sm" variant="outline" onClick={handleTest} disabled={testing || !url}>
-          {testing ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Database className="mr-1 h-3 w-3" />}
-          Test Connection
+          {testing ? <LoadingDots /> : <Database className="mr-1 h-3 w-3" />}
+          {!testing && "Test Connection"}
         </Button>
-        {dbTestResult && (
-          dbTestResult.ok
-            ? <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400"><CheckCircle className="h-3.5 w-3.5" /> Connected</span>
-            : <span className="inline-flex items-center gap-1 text-xs text-red-600 dark:text-red-400"><XCircle className="h-3.5 w-3.5" /> {dbTestResult.error}</span>
-        )}
+        <AnimatePresence mode="wait">
+          {dbTestResult && (
+            dbTestResult.ok
+              ? <motion.span key="ok" initial={{ opacity: 0, x: -4 }} animate={{ opacity: 1, x: 0 }} className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400"><AnimatedCheckmark /> Connected</motion.span>
+              : <motion.span key="err" initial={{ opacity: 0, x: -4 }} animate={{ opacity: 1, x: 0 }} className="inline-flex items-center gap-1 text-xs text-red-600 dark:text-red-400"><XCircle className="h-3.5 w-3.5" /> {dbTestResult.error}</motion.span>
+          )}
+        </AnimatePresence>
       </div>
 
       <div className="flex items-center gap-2">
@@ -430,27 +472,27 @@ function LLMTab({ settings }: { settings: UseSettingsReturn }) {
         {/* Test Connection */}
         <div className="flex items-center gap-2">
           <Button size="sm" variant="outline" onClick={handleTestCody} disabled={codyTest.loading}>
-            {codyTest.loading ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Brain className="mr-1 h-3 w-3" />}
-            Test Connection
+            {codyTest.loading ? <LoadingDots /> : <Brain className="mr-1 h-3 w-3" />}
+            {!codyTest.loading && "Test Connection"}
           </Button>
           {codyTest.result && !codyTest.result.ok && (
-            <span className="inline-flex items-center gap-1 text-xs text-red-600 dark:text-red-400">
+            <motion.span initial={{ opacity: 0, x: -4 }} animate={{ opacity: 1, x: 0 }} className="inline-flex items-center gap-1 text-xs text-red-600 dark:text-red-400">
               <XCircle className="h-3.5 w-3.5" /> {codyTest.result.error}
-            </span>
+            </motion.span>
           )}
         </div>
 
         {/* Auth success display */}
         {codyTest.result?.ok && codyTest.result.user && (
-          <div className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
-            <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+          <motion.div initial={{ opacity: 0, x: -4 }} animate={{ opacity: 1, x: 0 }} className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
+            <AnimatedCheckmark />
             <span>
               Authenticated as <strong>{codyTest.result.user.displayName}</strong>
               {codyTest.result.user.email && (
                 <span className="text-muted-foreground"> ({codyTest.result.user.email})</span>
               )}
             </span>
-          </div>
+          </motion.div>
         )}
 
         {/* Model dropdown — shown after successful test */}
@@ -494,22 +536,22 @@ function LLMTab({ settings }: { settings: UseSettingsReturn }) {
         {/* Test Connection */}
         <div className="flex items-center gap-2">
           <Button size="sm" variant="outline" onClick={handleTestOllama} disabled={ollamaTest.loading}>
-            {ollamaTest.loading ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <HardDrive className="mr-1 h-3 w-3" />}
-            Test Connection
+            {ollamaTest.loading ? <LoadingDots /> : <HardDrive className="mr-1 h-3 w-3" />}
+            {!ollamaTest.loading && "Test Connection"}
           </Button>
           {ollamaTest.result && !ollamaTest.result.ok && (
-            <span className="inline-flex items-center gap-1 text-xs text-red-600 dark:text-red-400">
+            <motion.span initial={{ opacity: 0, x: -4 }} animate={{ opacity: 1, x: 0 }} className="inline-flex items-center gap-1 text-xs text-red-600 dark:text-red-400">
               <XCircle className="h-3.5 w-3.5" /> {ollamaTest.result.error}
-            </span>
+            </motion.span>
           )}
         </div>
 
         {/* Success display */}
         {ollamaTest.result?.ok && (
-          <div className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
-            <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+          <motion.div initial={{ opacity: 0, x: -4 }} animate={{ opacity: 1, x: 0 }} className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
+            <AnimatedCheckmark />
             <span>Connected &mdash; {ollamaTest.result.models?.length ?? 0} models available</span>
-          </div>
+          </motion.div>
         )}
 
         {/* Model dropdown — shown after successful test */}
@@ -1028,28 +1070,32 @@ export function SettingsDialog({ open, onOpenChange, settings, tour, onDbSaved, 
                 }}
                 className="mt-2"
               >
-                <TabsList className="flex-wrap">
-                  <TabsTrigger value="database" className="gap-1 text-xs" disabled={tour.active}>
-                    <Database className="h-3.5 w-3.5" /> Database
-                  </TabsTrigger>
-                  <TabsTrigger value="retrieval" className="gap-1 text-xs" disabled={tour.active}>
-                    <Search className="h-3.5 w-3.5" /> Retrieval
-                  </TabsTrigger>
-                  <TabsTrigger value="llm" className="gap-1 text-xs" disabled={tour.active}>
-                    <Brain className="h-3.5 w-3.5" /> LLM{tabBadge(["llm", "cody", "ollama"])}
-                  </TabsTrigger>
-                  <TabsTrigger value="intelligence" className="gap-1 text-xs" disabled={tour.active}>
-                    <Sparkles className="h-3.5 w-3.5" /> Intel
-                  </TabsTrigger>
-                  <TabsTrigger value="generation" className="gap-1 text-xs" disabled={tour.active}>
-                    <Sparkles className="h-3.5 w-3.5" /> Gen
-                  </TabsTrigger>
-                  <TabsTrigger value="verification" className="gap-1 text-xs" disabled={tour.active}>
-                    <ShieldCheck className="h-3.5 w-3.5" /> Verify
-                  </TabsTrigger>
-                  <TabsTrigger value="indexing" className="gap-1 text-xs" disabled={tour.active}>
-                    <Radio className="h-3.5 w-3.5" /> Index{tabBadge(["indexing"])}
-                  </TabsTrigger>
+                <TabsList className="relative flex-wrap">
+                  {[
+                    { value: "database", icon: Database, label: "Database", badge: undefined },
+                    { value: "retrieval", icon: Search, label: "Retrieval", badge: undefined },
+                    { value: "llm", icon: Brain, label: "LLM", badge: tabBadge(["llm", "cody", "ollama"]) },
+                    { value: "intelligence", icon: Sparkles, label: "Intel", badge: undefined },
+                    { value: "generation", icon: Sparkles, label: "Gen", badge: undefined },
+                    { value: "verification", icon: ShieldCheck, label: "Verify", badge: undefined },
+                    { value: "indexing", icon: Radio, label: "Index", badge: tabBadge(["indexing"]) },
+                  ].map((tab) => (
+                    <TabsTrigger
+                      key={tab.value}
+                      value={tab.value}
+                      className="relative gap-1 text-xs"
+                      disabled={tour.active}
+                    >
+                      <tab.icon className="h-3.5 w-3.5" /> {tab.label}{tab.badge}
+                      {activeTab === tab.value && (
+                        <motion.div
+                          layoutId="activeSettingsTab"
+                          className="absolute -bottom-px left-1 right-1 h-0.5 rounded-full bg-primary"
+                          transition={{ type: "spring", stiffness: 400, damping: 28 }}
+                        />
+                      )}
+                    </TabsTrigger>
+                  ))}
                 </TabsList>
 
                 {/* Tour overlay for tab steps */}

@@ -3,7 +3,6 @@ import { StatusIndicator } from "./status-indicator";
 import { vi } from "vitest";
 
 vi.mock("framer-motion", () => ({
-  AnimatePresence: ({ children }: React.PropsWithChildren) => <>{children}</>,
   motion: {
     div: ({
       children,
@@ -22,6 +21,7 @@ vi.mock("framer-motion", () => ({
       </div>
     ),
   },
+  useReducedMotion: () => false,
 }));
 
 describe("StatusIndicator", () => {
@@ -35,37 +35,45 @@ describe("StatusIndicator", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("renders classifying status", () => {
+  it("renders classifying step as active", () => {
     render(<StatusIndicator status="classifying" />);
-    expect(screen.getByText("Classifying intent\u2026")).toBeInTheDocument();
+    expect(screen.getByText("Classify")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
-  it("renders retrieving status", () => {
+  it("renders retrieving step with Search label", () => {
     render(<StatusIndicator status="retrieving" />);
-    expect(
-      screen.getByText("Searching documentation\u2026"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Search")).toBeInTheDocument();
   });
 
-  it("renders generating status", () => {
+  it("renders generating step", () => {
     render(<StatusIndicator status="generating" />);
-    expect(screen.getByText("Generating answer\u2026")).toBeInTheDocument();
+    expect(screen.getByText("Generate")).toBeInTheDocument();
   });
 
-  it("renders verifying status", () => {
+  it("renders verifying step", () => {
     render(<StatusIndicator status="verifying" />);
-    expect(screen.getByText("Verifying answer\u2026")).toBeInTheDocument();
+    expect(screen.getByText("Verify")).toBeInTheDocument();
   });
 
   it("has status role for accessibility", () => {
     render(<StatusIndicator status="retrieving" />);
     expect(screen.getByRole("status")).toBeInTheDocument();
   });
+
+  it("shows all 5 pipeline step labels", () => {
+    render(<StatusIndicator status="grading" />);
+    expect(screen.getByText("Classify")).toBeInTheDocument();
+    expect(screen.getByText("Search")).toBeInTheDocument();
+    expect(screen.getByText("Grade")).toBeInTheDocument();
+    expect(screen.getByText("Generate")).toBeInTheDocument();
+    expect(screen.getByText("Verify")).toBeInTheDocument();
+  });
 });
 
 describe("StatusIndicator – gap coverage", () => {
-  it("renders grading pipeline status with correct text", () => {
+  it("renders grading pipeline status with Grade label", () => {
     render(<StatusIndicator status="grading" />);
-    expect(screen.getByText("Grading relevance\u2026")).toBeInTheDocument();
+    expect(screen.getByText("Grade")).toBeInTheDocument();
   });
 });

@@ -51,6 +51,7 @@ vi.mock("framer-motion", () => {
         <button {...filterDomProps(props)}>{children}</button>
       ),
     },
+    useReducedMotion: () => false,
   };
 });
 
@@ -107,11 +108,14 @@ describe("ConversationSidebar", () => {
     expect(activeBtn.className).toContain("bg-accent");
   });
 
-  it("applies hover class to inactive conversation", () => {
+  it("applies base class to inactive conversation", () => {
     const props = defaultProps();
     render(<ConversationSidebar {...props} />);
     const inactiveBtn = screen.getByText("Second chat").closest("button")!;
-    expect(inactiveBtn.className).toContain("hover:bg-accent/50");
+    expect(inactiveBtn.className).toContain("text-foreground");
+    // Active conversation should not have the base-only class
+    const activeBtn = screen.getByText("First chat").closest("button")!;
+    expect(activeBtn.className).toContain("bg-accent");
   });
 
   // ── Interactions ────────────────────────────────────────────────

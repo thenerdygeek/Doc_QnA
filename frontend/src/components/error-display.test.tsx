@@ -15,6 +15,7 @@ vi.mock("framer-motion", () => ({
       </div>
     ),
   },
+  useReducedMotion: () => false,
 }));
 
 describe("ErrorDisplay", () => {

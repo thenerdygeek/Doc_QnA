@@ -886,7 +886,7 @@ def create_app(
             elif system == "Linux":
                 subprocess.Popen(["xdg-open", str(path)])
             elif system == "Windows":
-                subprocess.Popen(["start", "", str(path)], shell=True)
+                os.startfile(str(path))
             else:
                 return {"ok": False, "error": f"Unsupported platform: {system}"}
             return {"ok": True}

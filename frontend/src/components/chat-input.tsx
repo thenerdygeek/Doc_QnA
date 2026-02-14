@@ -1,5 +1,5 @@
-import { useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { motion } from "framer-motion";
+import { useCallback, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { ArrowUp, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -17,7 +17,13 @@ export function ChatInput({
   disabled,
 }: ChatInputProps) {
   const [value, setValue] = useState("");
+  const [rippling, setRippling] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const triggerRipple = useCallback(() => {
+    setRippling(true);
+    setTimeout(() => setRippling(false), 600);
+  }, []);
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -27,6 +33,7 @@ export function ChatInput({
   function submit() {
     const trimmed = value.trim();
     if (!trimmed || isStreaming) return;
+    triggerRipple();
     onSubmit(trimmed);
     setValue("");
     if (textareaRef.current) {
@@ -61,7 +68,7 @@ export function ChatInput({
         role="search"
         aria-label="Ask a question"
       >
-        <div className="relative flex flex-1 items-end rounded-xl border border-input bg-background shadow-sm transition-all focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-ring/20">
+        <div className="input-focus-ring relative flex flex-1 items-end rounded-xl border border-input bg-background shadow-sm transition-all focus-within:border-primary/50">
           <textarea
             ref={textareaRef}
             value={value}
@@ -75,34 +82,46 @@ export function ChatInput({
             className="flex-1 resize-none bg-transparent px-3 py-2.5 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50 sm:px-4 sm:py-3"
           />
           <div className="p-1.5">
-            {isStreaming ? (
-              <motion.div
-                initial={{ scale: 0.8 }}
-                animate={{ scale: 1 }}
-                transition={{ duration: 0.15 }}
-              >
-                <Button
-                  type="button"
-                  variant="destructive"
-                  size="icon-sm"
-                  onClick={onStop}
-                  aria-label="Stop generating"
-                  className="rounded-lg"
+            <AnimatePresence mode="wait" initial={false}>
+              {isStreaming ? (
+                <motion.div
+                  key="stop"
+                  initial={{ opacity: 0, rotate: -90, scale: 0.5 }}
+                  animate={{ opacity: 1, rotate: 0, scale: 1 }}
+                  exit={{ opacity: 0, rotate: 90, scale: 0.5 }}
+                  transition={{ duration: 0.2 }}
                 >
-                  <Square className="h-3.5 w-3.5" />
-                </Button>
-              </motion.div>
-            ) : (
-              <Button
-                type="submit"
-                size="icon-sm"
-                disabled={!canSend}
-                aria-label="Send question"
-                className="rounded-lg transition-opacity"
-              >
-                <ArrowUp className="h-3.5 w-3.5" />
-              </Button>
-            )}
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="icon-sm"
+                    onClick={onStop}
+                    aria-label="Stop generating"
+                    className="rounded-lg"
+                  >
+                    <Square className="h-3.5 w-3.5" />
+                  </Button>
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="send"
+                  initial={{ opacity: 0, rotate: 90, scale: 0.5 }}
+                  animate={{ opacity: 1, rotate: 0, scale: 1 }}
+                  exit={{ opacity: 0, rotate: -90, scale: 0.5 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <Button
+                    type="submit"
+                    size="icon-sm"
+                    disabled={!canSend}
+                    aria-label="Send question"
+                    className={`submit-ripple rounded-lg transition-opacity ${rippling ? "rippling" : ""}`}
+                  >
+                    <ArrowUp className="h-3.5 w-3.5" />
+                  </Button>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
       </form>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { motion, useReducedMotion } from "framer-motion";
 import { Compass, Menu, MessageSquarePlus, Settings } from "lucide-react";
 import { ChatInput } from "@/components/chat-input";
 import { MessageList, type Message } from "@/components/message-list";
@@ -41,6 +42,8 @@ export default function App() {
   const tour = useTour();
   const indexing = useIndexing();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const isFirstLoad = useRef(true);
+  const prefersReduced = useReducedMotion();
   const prevStreamSessionId = useRef<string | null>(null);
   const idPrefix = useId();
   const msgCounter = useRef(messages.length);
@@ -190,8 +193,13 @@ export default function App() {
       )}
 
       {/* Main content */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="glass flex items-center justify-between border-b border-border/60 px-3 py-2 sm:px-6 sm:py-3">
+      <div className="flex min-w-0 flex-1 flex-col transition-all duration-300">
+        <motion.header
+          initial={isFirstLoad.current && !prefersReduced ? { opacity: 0, y: -20 } : false}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, ease: "easeOut" }}
+          className="glass flex items-center justify-between border-b border-border/60 px-3 py-2 sm:px-6 sm:py-3"
+        >
           <div className="flex items-center gap-2">
             {/* Mobile sidebar toggle */}
             {showSidebar && (
@@ -234,17 +242,31 @@ export default function App() {
             <div className="h-4 w-px bg-border" aria-hidden="true" />
             <ThemeToggle />
           </div>
-        </header>
-        {isEmpty ? (
-          <WelcomeScreen onSelectQuestion={submitQuestion} />
-        ) : (
-          <MessageList messages={displayMessages} onRetry={handleRetry} />
-        )}
-        <ChatInput
-          onSubmit={submitQuestion}
-          onStop={stream.cancel}
-          isStreaming={stream.phase === "streaming"}
-        />
+        </motion.header>
+        <motion.div
+          initial={isFirstLoad.current && !prefersReduced ? { opacity: 0, y: 20 } : false}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.1, ease: "easeOut" }}
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          {isEmpty ? (
+            <WelcomeScreen onSelectQuestion={submitQuestion} />
+          ) : (
+            <MessageList messages={displayMessages} onRetry={handleRetry} />
+          )}
+        </motion.div>
+        <motion.div
+          initial={isFirstLoad.current && !prefersReduced ? { opacity: 0, y: 20 } : false}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.2, ease: "easeOut" }}
+          onAnimationComplete={() => { isFirstLoad.current = false; }}
+        >
+          <ChatInput
+            onSubmit={submitQuestion}
+            onStop={stream.cancel}
+            isStreaming={stream.phase === "streaming"}
+          />
+        </motion.div>
         {/* Bottom "Take a Tour" link for returning users */}
         {!tour.active && (
           <div className="flex justify-center border-t border-border/30 py-1.5">
