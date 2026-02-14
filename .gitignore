@@ -10,3 +10,8 @@ build/
 .venv/
 frontend/node_modules/
 frontend/dist/
+
+# LanceDB artifacts (binary vector DB files, not portable)
+*.lance
+:memory:/
+**/doc_qa_db/
