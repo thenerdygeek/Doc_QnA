@@ -712,7 +712,16 @@ def create_app(
         # Resolve Cody env vars so the Settings UI shows actual values
         if "cody" in data:
             token_env = cfg.cody.access_token_env or "SRC_ACCESS_TOKEN"
-            data["cody"]["_token_is_set"] = bool(os.environ.get(token_env, ""))
+            token = os.environ.get(token_env, "")
+            data["cody"]["_token_is_set"] = bool(token)
+            # Masked preview: first 4 + *** + last 4  (or just *** if short)
+            if token:
+                if len(token) > 10:
+                    data["cody"]["_token_masked"] = f"{token[:4]}{'*' * (len(token) - 8)}{token[-4:]}"
+                else:
+                    data["cody"]["_token_masked"] = "*" * len(token)
+            else:
+                data["cody"]["_token_masked"] = ""
             # Always show the resolved endpoint (config → SRC_ENDPOINT → default)
             data["cody"]["endpoint"] = resolve_cody_endpoint(cfg)
 
@@ -860,6 +869,41 @@ def create_app(
         except Exception as exc:
             logger.exception("Migration failed")
             return {"ok": False, "error": str(exc)}
+
+    # ── Directory browse endpoint ────────────────────────────────────
+
+    @app.get("/api/browse")
+    async def browse_directory(path: str = "") -> dict:
+        """List directories at a given path for the folder picker."""
+        import platform
+
+        if not path:
+            # Return filesystem roots
+            if platform.system() == "Windows":
+                import string
+                drives = []
+                for letter in string.ascii_uppercase:
+                    dp = Path(f"{letter}:\\")
+                    if dp.exists():
+                        drives.append({"name": f"{letter}:\\", "path": f"{letter}:\\"})
+                return {"path": "", "parent": "", "dirs": drives}
+            else:
+                path = str(Path.home())
+
+        p = Path(path)
+        if not p.is_dir():
+            raise HTTPException(status_code=400, detail=f"Not a valid directory: {path}")
+
+        dirs = []
+        try:
+            for entry in sorted(p.iterdir()):
+                if entry.is_dir() and not entry.name.startswith("."):
+                    dirs.append({"name": entry.name, "path": str(entry)})
+        except PermissionError:
+            pass  # Return empty list for inaccessible dirs
+
+        parent = str(p.parent) if p.parent != p else ""
+        return {"path": str(p), "parent": parent, "dirs": dirs}
 
     # ── LLM test endpoints ──────────────────────────────────────────
 

@@ -186,6 +186,9 @@ vi.mock("lucide-react", () => {
     PartyPopper: icon("PartyPopper"),
     Rocket: icon("Rocket"),
     FolderOpen: icon("FolderOpen"),
+    FolderSearch: icon("FolderSearch"),
+    Folder: icon("Folder"),
+    ArrowUp: icon("ArrowUp"),
     Play: icon("Play"),
     Square: icon("Square"),
     FileText: icon("FileText"),
@@ -1167,7 +1170,7 @@ describe("IndexingTab", () => {
     renderDialog();
     expect(
       screen.getByText(
-        "Full path to a documentation folder. A new index will replace the old one.",
+        "Path to a documentation folder (relative or absolute). A new index will replace the old one.",
       ),
     ).toBeInTheDocument();
   });

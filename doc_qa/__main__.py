@@ -290,6 +290,35 @@ def cmd_db(args: argparse.Namespace) -> None:
         print("Done.")
 
 
+def _ensure_embedding_model(model_name: str) -> None:
+    """Pre-download the embedding model, then enable offline mode.
+
+    After this call, fastembed / huggingface_hub will NOT make any
+    network requests — all model data is served from the local cache.
+    """
+    import os
+
+    from doc_qa.indexing.embedder import _get_model
+
+    print(f"Loading embedding model: {model_name} ...")
+    try:
+        _get_model(model_name)
+        print("Embedding model ready (cached).")
+    except Exception as e:
+        print(f"Error: Failed to load embedding model: {e}", file=sys.stderr)
+        print(
+            "The model may need to be downloaded first (requires internet).\n"
+            "Run with internet once:  doc-qa serve\n"
+            "After the model is cached, the tool works fully offline.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Lock down: no more network calls from fastembed / huggingface_hub
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
+
 def cmd_serve(args: argparse.Namespace) -> None:
     """Start the FastAPI server."""
     import uvicorn
@@ -297,6 +326,9 @@ def cmd_serve(args: argparse.Namespace) -> None:
     from doc_qa.api.server import create_app
 
     config = load_config(Path(args.config) if args.config else None)
+
+    # ── Pre-download embedding model (internet required on first run only) ──
+    _ensure_embedding_model(config.indexing.embedding_model)
 
     # Resolve repo path: CLI flag → config.yaml → None (configure from UI)
     repo_str: str | None = args.repo
@@ -327,6 +359,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
     app = create_app(repo_path=repo_str or "", config=config)
     print(f"Starting server at http://{host}:{port}")
     print(f"API docs: http://{host}:{port}/docs")
+    print("Server is fully offline (except Cody/Ollama LLM backends).\n")
     uvicorn.run(app, host=host, port=port)
 
 

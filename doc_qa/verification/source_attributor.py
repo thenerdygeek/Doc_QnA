@@ -19,22 +19,15 @@ logger = logging.getLogger(__name__)
 # Lazy singleton for the embedding model
 # ---------------------------------------------------------------------------
 
-_embedding_model = None
-_EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-
 # Minimum cosine similarity to consider a match.
 _ATTRIBUTION_THRESHOLD = 0.3
 
 
 def _get_embedding_model():
-    """Return a lazily-initialised fastembed TextEmbedding model."""
-    global _embedding_model  # noqa: PLW0603
-    if _embedding_model is None:
-        from fastembed import TextEmbedding
+    """Return the shared fastembed TextEmbedding model from the indexing embedder."""
+    from doc_qa.indexing.embedder import _get_model
 
-        _embedding_model = TextEmbedding(model_name=_EMBEDDING_MODEL_NAME)
-        logger.info("Initialized fastembed model: %s", _EMBEDDING_MODEL_NAME)
-    return _embedding_model
+    return _get_model()
 
 
 # ---------------------------------------------------------------------------

@@ -19,9 +19,12 @@ import {
   PartyPopper,
   Rocket,
   FolderOpen,
+  FolderSearch,
   Play,
   Square,
   FileText,
+  Folder,
+  ArrowUp,
 } from "lucide-react";
 import {
   Dialog,
@@ -354,7 +357,7 @@ function RetrievalTab({ settings }: { settings: UseSettingsReturn }) {
 function LLMTab({ settings }: { settings: UseSettingsReturn }) {
   const { config, updateSection, saving, restartRequired } = settings;
   const [llm, setLlm] = useState({ primary: "cody", fallback: "ollama" });
-  const [cody, setCody] = useState({ model: "", endpoint: "", access_token_env: "SRC_ACCESS_TOKEN", _token_is_set: false });
+  const [cody, setCody] = useState({ model: "", endpoint: "", access_token_env: "SRC_ACCESS_TOKEN", _token_is_set: false, _token_masked: "" });
   const [ollama, setOllama] = useState({ host: "", model: "" });
   const [saved, setSaved] = useState(false);
 
@@ -373,6 +376,7 @@ function LLMTab({ settings }: { settings: UseSettingsReturn }) {
       endpoint: field(config, "cody", "endpoint", ""),
       access_token_env: field(config, "cody", "access_token_env", "SRC_ACCESS_TOKEN"),
       _token_is_set: field(config, "cody", "_token_is_set", false),
+      _token_masked: field(config, "cody", "_token_masked", ""),
     });
     setOllama({
       host: field(config, "ollama", "host", ""),
@@ -467,16 +471,20 @@ function LLMTab({ settings }: { settings: UseSettingsReturn }) {
           <Input id="cody-token-env" value={cody.access_token_env} placeholder="SRC_ACCESS_TOKEN" onChange={(e) => setCody((f) => ({ ...f, access_token_env: e.target.value }))} />
           <p className="text-muted-foreground text-[11px]">
             Environment variable containing your Sourcegraph token
-            {cody._token_is_set ? (
-              <span className="ml-1.5 inline-flex items-center gap-0.5 text-green-600 dark:text-green-400">
-                <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" /> Set
-              </span>
-            ) : (
-              <span className="ml-1.5 inline-flex items-center gap-0.5 text-red-500 dark:text-red-400">
-                <span className="inline-block h-1.5 w-1.5 rounded-full bg-red-500" /> Not set
-              </span>
-            )}
           </p>
+          {cody._token_is_set ? (
+            <div className="flex items-center gap-2 rounded-md border border-green-500/20 bg-green-500/5 px-2.5 py-1.5">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
+              <code className="flex-1 truncate font-mono text-xs text-muted-foreground">{cody._token_masked}</code>
+              <span className="text-[11px] font-medium text-green-600 dark:text-green-400">Active</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 rounded-md border border-red-500/20 bg-red-500/5 px-2.5 py-1.5">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-red-500" />
+              <span className="flex-1 text-xs text-muted-foreground">No token found in <code className="font-mono">${cody.access_token_env}</code></span>
+              <span className="text-[11px] font-medium text-red-500 dark:text-red-400">Not set</span>
+            </div>
+          )}
         </div>
 
         {/* Test Connection */}
@@ -778,9 +786,101 @@ function stateLabel(state: string): string {
   return STATE_LABELS[state] ?? state;
 }
 
+// ── Folder browser dialog ──────────────────────────────────────
+
+function FolderBrowser({ open, onClose, onSelect }: { open: boolean; onClose: () => void; onSelect: (path: string) => void }) {
+  const [currentPath, setCurrentPath] = useState("");
+  const [parentPath, setParentPath] = useState("");
+  const [dirs, setDirs] = useState<{ name: string; path: string }[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const browse = useCallback(async (path: string) => {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await api.browse(path);
+      setCurrentPath(result.path);
+      setParentPath(result.parent);
+      setDirs(result.dirs);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to browse");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (open) browse("");
+  }, [open, browse]);
+
+  if (!open) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><FolderSearch className="h-4 w-4" /> Browse Folders</DialogTitle>
+          <DialogDescription>Navigate to a documentation folder and click Select.</DialogDescription>
+        </DialogHeader>
+
+        {/* Current path */}
+        <div className="rounded-md bg-muted/50 px-3 py-2">
+          <code className="block truncate text-xs text-foreground">{currentPath || "/"}</code>
+        </div>
+
+        {/* Directory listing */}
+        <ScrollArea className="h-[280px] rounded-md border">
+          <div className="p-1">
+            {/* Up button */}
+            {parentPath && (
+              <button
+                onClick={() => browse(parentPath)}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+              >
+                <ArrowUp className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="text-muted-foreground">..</span>
+              </button>
+            )}
+            {loading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : error ? (
+              <p className="px-2 py-4 text-center text-xs text-red-500">{error}</p>
+            ) : dirs.length === 0 ? (
+              <p className="px-2 py-4 text-center text-xs text-muted-foreground">No subdirectories</p>
+            ) : (
+              dirs.map((d) => (
+                <button
+                  key={d.path}
+                  onClick={() => browse(d.path)}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+                >
+                  <Folder className="h-3.5 w-3.5 text-blue-500" />
+                  <span className="truncate">{d.name}</span>
+                </button>
+              ))
+            )}
+          </div>
+        </ScrollArea>
+
+        {/* Actions */}
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+          <Button size="sm" disabled={!currentPath} onClick={() => { onSelect(currentPath); onClose(); }}>
+            <FolderOpen className="mr-1.5 h-3.5 w-3.5" /> Select
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function IndexingTab({ settings, indexing }: { settings: UseSettingsReturn; indexing: UseIndexingReturn }) {
   const { config, updateSection, saving, restartRequired } = settings;
   const [repoPath, setRepoPath] = useState("");
+  const [browseOpen, setBrowseOpen] = useState(false);
   const [form, setForm] = useState({
     chunk_size: 512,
     chunk_overlap: 50,
@@ -839,6 +939,16 @@ function IndexingTab({ settings, indexing }: { settings: UseSettingsReturn; inde
               className="pl-8"
             />
           </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setBrowseOpen(true)}
+            disabled={isRunning}
+            className="shrink-0"
+            title="Browse folders"
+          >
+            <FolderSearch className="h-4 w-4" />
+          </Button>
           {isRunning ? (
             <Button
               size="sm"
@@ -860,8 +970,9 @@ function IndexingTab({ settings, indexing }: { settings: UseSettingsReturn; inde
           )}
         </div>
         <p className="text-muted-foreground text-xs">
-          Full path to a documentation folder. A new index will replace the old one.
+          Path to a documentation folder (relative or absolute). A new index will replace the old one.
         </p>
+        <FolderBrowser open={browseOpen} onClose={() => setBrowseOpen(false)} onSelect={setRepoPath} />
       </div>
 
       {/* ── Progress section ──────────────────────────────────── */}

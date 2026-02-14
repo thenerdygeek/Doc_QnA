@@ -134,6 +134,12 @@ export const api = {
       }),
   },
 
+  browse: (path = "") =>
+    request<{ path: string; parent: string; dirs: { name: string; path: string }[] }>(
+      `/api/browse?path=${encodeURIComponent(path)}`,
+      { timeoutMs: 5_000 },
+    ),
+
   llm: {
     testCody: (body: { endpoint: string; access_token_env: string }) =>
       request<CodyTestResponse>("/api/llm/cody/test", {
