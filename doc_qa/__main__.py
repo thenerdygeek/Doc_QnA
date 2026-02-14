@@ -332,21 +332,13 @@ def _ensure_embedding_model(model_name: str) -> None:
             print(
                 "\nThe embedding model (~90 MB) must be downloaded once.\n"
                 "\n"
-                "Option 1 — Run the download command (with internet):\n"
-                "  doc-qa download-model\n"
-                "\n"
-                "Option 2 — Manual browser download:\n"
-                "  1. Download this file in your browser:\n"
+                "Option 1 — Download in your browser, then install:\n"
+                "  1. Open this URL in your browser:\n"
                 "     https://storage.googleapis.com/qdrant-fastembed/sentence-transformers-all-MiniLM-L6-v2.tar.gz\n"
-                "  2. Extract the tar.gz into the cache directory below.\n"
-                "     You should end up with:\n"
-                f"       {cache_dir}/fast-all-MiniLM-L6-v2/model.onnx\n"
-                "     On Windows (PowerShell):\n"
-                f'       tar -xzf sentence-transformers-all-MiniLM-L6-v2.tar.gz -C "{cache_dir}"\n'
-                "     On macOS/Linux:\n"
-                f'       tar -xzf sentence-transformers-all-MiniLM-L6-v2.tar.gz -C "{cache_dir}"\n'
+                "  2. Run:\n"
+                "     doc-qa install-model /path/to/sentence-transformers-all-MiniLM-L6-v2.tar.gz\n"
                 "\n"
-                "Option 3 — Copy from another machine:\n"
+                "Option 2 — Copy from another machine:\n"
                 "  Copy the data/models/ folder from a machine that already has the model.\n"
                 f"\nCache directory: {cache_dir}",
                 file=sys.stderr,
@@ -396,16 +388,11 @@ def cmd_download_model(args: argparse.Namespace) -> None:
         print(
             "\nAutomatic download failed. Manual steps:\n"
             "\n"
-            "Option 1 — Manual browser download:\n"
-            "  1. Download this file in your browser:\n"
+            "Option 1 — Download in your browser, then install:\n"
+            "  1. Open this URL in your browser:\n"
             "     https://storage.googleapis.com/qdrant-fastembed/sentence-transformers-all-MiniLM-L6-v2.tar.gz\n"
-            "  2. Extract the tar.gz into the cache directory below.\n"
-            "     You should end up with:\n"
-            f"       {cache_dir}/fast-all-MiniLM-L6-v2/model.onnx\n"
-            "     On Windows (PowerShell):\n"
-            f'       tar -xzf sentence-transformers-all-MiniLM-L6-v2.tar.gz -C "{cache_dir}"\n'
-            "     On macOS/Linux:\n"
-            f'       tar -xzf sentence-transformers-all-MiniLM-L6-v2.tar.gz -C "{cache_dir}"\n'
+            "  2. Run:\n"
+            "     doc-qa install-model /path/to/sentence-transformers-all-MiniLM-L6-v2.tar.gz\n"
             "\n"
             "Option 2 — Behind a corporate proxy:\n"
             "  set HTTPS_PROXY=http://your-proxy:8080\n"
@@ -416,6 +403,83 @@ def cmd_download_model(args: argparse.Namespace) -> None:
             f"\nCache directory: {cache_dir}",
             file=sys.stderr,
         )
+        sys.exit(1)
+
+
+def cmd_install_model(args: argparse.Namespace) -> None:
+    """Install the embedding model from a locally downloaded tar.gz file.
+
+    For users who downloaded the model via browser because automatic
+    download failed (e.g., corporate proxy blocking Python requests).
+    """
+    import os
+    import tarfile
+
+    from doc_qa.indexing.embedder import (
+        _cleanup_corrupt_hf_cache,
+        _get_model,
+        embed_texts,
+        get_cache_dir,
+    )
+
+    tar_path = Path(args.file)
+    if not tar_path.is_file():
+        print(f"Error: '{tar_path}' not found.", file=sys.stderr)
+        sys.exit(1)
+
+    if not tar_path.name.endswith((".tar.gz", ".tgz")):
+        print(f"Error: Expected a .tar.gz file, got '{tar_path.name}'.", file=sys.stderr)
+        sys.exit(1)
+
+    config = load_config(Path(args.config) if args.config else None)
+    model_name = config.indexing.embedding_model
+    cache_dir = get_cache_dir()
+
+    print(f"Installing embedding model from: {tar_path}")
+    print(f"  Cache directory: {cache_dir}\n")
+
+    # 1. Create cache dir
+    os.makedirs(cache_dir, exist_ok=True)
+
+    # 2. Clean up any corrupt HF cache from previous failed downloads
+    print("  Cleaning up any corrupt cache...")
+    _cleanup_corrupt_hf_cache(cache_dir, model_name)
+
+    # 3. Extract tar.gz
+    print(f"  Extracting {tar_path.name}...")
+    try:
+        with tarfile.open(tar_path, "r:gz") as tar:
+            tar.extractall(path=cache_dir)
+    except Exception as e:
+        print(f"\nError extracting: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # 4. Verify model.onnx exists
+    model_dir = Path(cache_dir) / "fast-all-MiniLM-L6-v2"
+    onnx_file = model_dir / "model.onnx"
+    if not onnx_file.is_file():
+        print(f"\nError: Expected file not found: {onnx_file}", file=sys.stderr)
+        print("The tar.gz may have a different structure.", file=sys.stderr)
+        # List what was extracted
+        if model_dir.exists():
+            print(f"\nContents of {model_dir}:", file=sys.stderr)
+            for f in sorted(model_dir.iterdir()):
+                print(f"  {f.name}", file=sys.stderr)
+        sys.exit(1)
+
+    # 5. Load into fastembed and verify
+    print("  Loading model into fastembed...")
+    try:
+        _get_model(model_name)
+        vecs = embed_texts(["test"])
+        print(f"\nModel installed and verified (dim={len(vecs[0])}).")
+        print(f"Cache: {cache_dir}")
+        print("\nYou can now run 'doc-qa serve' — no internet required.")
+    except Exception as e:
+        print(f"\nError: Model extracted but failed to load: {e}", file=sys.stderr)
+        print("Try deleting the cache and re-installing:", file=sys.stderr)
+        print(f"  rm -rf {cache_dir}", file=sys.stderr)
+        print(f"  doc-qa install-model {tar_path}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -509,6 +573,17 @@ def main() -> None:
     # download-model command
     p_dl = sub.add_parser("download-model", help="Download the embedding model (run once with internet)")
     p_dl.set_defaults(func=cmd_download_model)
+
+    # install-model command
+    p_install = sub.add_parser(
+        "install-model",
+        help="Install the embedding model from a downloaded tar.gz file",
+    )
+    p_install.add_argument(
+        "file",
+        help="Path to the downloaded sentence-transformers-all-MiniLM-L6-v2.tar.gz file",
+    )
+    p_install.set_defaults(func=cmd_install_model)
 
     # serve command
     p_serve = sub.add_parser("serve", help="Start the API server")

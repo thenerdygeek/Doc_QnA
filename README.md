@@ -131,7 +131,12 @@ The embedding model (~90 MB) is needed for indexing and search. It downloads aut
 doc-qa download-model
 ```
 
-The model is cached in `data/models/` inside the project — it only downloads once and works offline after that. See [Embedding Model Download Fails](#embedding-model-download-fails) if you have trouble.
+**If that also fails** (corporate proxy, restricted network), download via your browser and install:
+
+1. Download: https://storage.googleapis.com/qdrant-fastembed/sentence-transformers-all-MiniLM-L6-v2.tar.gz
+2. Run: `doc-qa install-model /path/to/sentence-transformers-all-MiniLM-L6-v2.tar.gz`
+
+The model is cached in `data/models/` inside the project — it only downloads once and works offline after that. See [Embedding Model Download Fails](#embedding-model-download-fails) for more details.
 
 ### 6. Start the server
 
@@ -359,6 +364,21 @@ Downloads the embedding model from Google Cloud Storage (~90 MB, one-time) and s
 - You want to pre-download before going offline
 
 After downloading, you can copy the `data/models/` folder to other machines for fully offline setup.
+
+### `install-model` — Install model from a downloaded file
+
+```bash
+doc-qa install-model /path/to/sentence-transformers-all-MiniLM-L6-v2.tar.gz
+```
+
+Installs the embedding model from a `.tar.gz` file you downloaded manually in your browser. This is the **recommended fallback** when automatic downloads fail (corporate networks, proxy issues, restricted internet).
+
+The command handles everything automatically:
+1. Cleans up any corrupt cache from previous failed downloads
+2. Extracts the tar.gz to the correct location
+3. Verifies the model loads and produces embeddings
+
+See [Embedding Model Download Fails](#embedding-model-download-fails) for the full workflow.
 
 ### `eval` — Evaluate retrieval quality
 
@@ -774,38 +794,35 @@ The embedding model (`all-MiniLM-L6-v2`, ~90 MB) is required for indexing and se
 1. **HuggingFace Hub** (default fastembed behavior)
 2. **Google Cloud Storage** (fallback — more reliable on corporate networks)
 
-If both fail (e.g., heavily restricted network, proxy issues), you have three manual options:
+If both fail (e.g., heavily restricted network, proxy issues), follow one of these options:
 
-#### Option A — Manual browser download
+#### Option A — Browser download + install (recommended)
 
-1. Download this file in your browser:
+Two steps — download in your browser, then run one command:
+
+1. **Download** this file in your browser (works even on restricted networks):
+
    ```
    https://storage.googleapis.com/qdrant-fastembed/sentence-transformers-all-MiniLM-L6-v2.tar.gz
    ```
 
-2. Extract it into the `data/models/` directory inside the project:
+2. **Install** it with one command:
 
-   **Windows (PowerShell):**
-   ```powershell
-   tar -xzf sentence-transformers-all-MiniLM-L6-v2.tar.gz -C "data\models"
-   ```
-
-   **macOS / Linux:**
    ```bash
-   tar -xzf sentence-transformers-all-MiniLM-L6-v2.tar.gz -C data/models
+   doc-qa install-model /path/to/sentence-transformers-all-MiniLM-L6-v2.tar.gz
    ```
 
-3. Verify the extracted structure — you should see:
-   ```
-   data/models/fast-all-MiniLM-L6-v2/
-   ├── model.onnx          (~90 MB)
-   ├── config.json
-   ├── tokenizer.json
-   ├── special_tokens_map.json
-   └── tokenizer_config.json
+   On Windows, the path might look like:
+   ```powershell
+   doc-qa install-model C:\Users\you\Downloads\sentence-transformers-all-MiniLM-L6-v2.tar.gz
    ```
 
-4. Run `doc-qa serve` again — it should now load the model from the local cache.
+   This command automatically:
+   - Cleans up any corrupt cache from previous failed downloads
+   - Extracts the model to `data/models/`
+   - Verifies it loads correctly and produces embeddings
+
+3. Run `doc-qa serve` — the model is now cached locally and no internet is needed.
 
 #### Option B — Corporate proxy
 
@@ -825,14 +842,15 @@ doc-qa download-model
 
 #### Option C — Copy from another machine
 
-If you have the model on another machine, copy the entire `data/models/` folder:
+If you have the model on another machine, copy the entire `data/models/` folder to the same location in the project on the new machine:
 
-```bash
-# On the machine that has the model:
-# zip or tar the data/models/ directory, then copy it to the new machine
-
-# On the new machine, place it at:
-#   <project-root>/data/models/fast-all-MiniLM-L6-v2/
+```
+<project-root>/data/models/fast-all-MiniLM-L6-v2/
+├── model.onnx          (~90 MB)
+├── config.json
+├── tokenizer.json
+├── special_tokens_map.json
+└── tokenizer_config.json
 ```
 
 ### Corrupt embedding model cache
