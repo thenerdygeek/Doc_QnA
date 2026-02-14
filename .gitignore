@@ -11,6 +11,10 @@ build/
 frontend/node_modules/
 frontend/dist/
 
+# Machine-specific config (paths, tokens, LLM settings)
+config.yaml
+frontend/config.yaml
+
 # LanceDB artifacts (binary vector DB files, not portable)
 *.lance
 :memory:/

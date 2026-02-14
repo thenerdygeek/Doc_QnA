@@ -1,5 +1,9 @@
+# Copy this file to config.yaml and adjust for your machine.
+# Paths can be relative (to where you run doc-qa) or absolute.
+# You can also configure doc_repo.path from the Settings UI.
+
 doc_repo:
-  path: /Users/subhankarhalder/Desktop/Programs/Cody/doc_qa_tool/tests/integration_data
+  path: ""  # e.g. ./tests/integration_data or /path/to/your/docs
   patterns:
   - '**/*.adoc'
   - '**/*.md'
@@ -26,16 +30,16 @@ retrieval:
   max_query_length: 2000
   max_history_turns: 10
 llm:
-  primary: ollama
-  fallback: cody
+  primary: cody
+  fallback: ollama
 cody:
-  access_token_env: '***'
+  access_token_env: SRC_ACCESS_TOKEN
   endpoint: https://sourcegraph.com
   agent_binary: null
   model: anthropic::2025-01-01::claude-3.5-sonnet
 ollama:
   host: http://localhost:11434
-  model: qwen2.5:3b
+  model: qwen2.5:7b
 api:
   host: 127.0.0.1
   port: 8000

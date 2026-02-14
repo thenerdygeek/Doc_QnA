@@ -306,9 +306,17 @@ def cmd_serve(args: argparse.Namespace) -> None:
     if repo_str:
         repo_path = Path(repo_str)
         if not repo_path.is_dir():
-            print(f"Error: '{repo_path}' is not a valid directory.", file=sys.stderr)
-            sys.exit(1)
-        repo_str = str(repo_path)
+            if args.repo:
+                # Explicit --repo flag: hard error (user typo)
+                print(f"Error: '{repo_path}' is not a valid directory.", file=sys.stderr)
+                sys.exit(1)
+            else:
+                # Stale path from config.yaml: warn and continue without repo
+                print(f"Warning: saved repo path '{repo_path}' not found on this machine.")
+                print("Configure the correct path in Settings > Indexing.\n")
+                repo_str = None
+        else:
+            repo_str = str(repo_path)
     else:
         print("No --repo specified and no doc_repo.path in config.yaml.")
         print("Start the UI and configure the repository path in Settings > Indexing.\n")
