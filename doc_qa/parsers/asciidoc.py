@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import platform
 import shutil
 import subprocess
 import tempfile
@@ -145,18 +146,25 @@ class AsciiDocParser(Parser):
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir) / (file_path.stem + ".docbook.xml")
 
+            cmd = [
+                "asciidoctor",
+                "-b", "docbook",
+                "-o", str(tmp_path),
+                "--base-dir", str(file_path.parent),
+                "--safe-mode", "unsafe",
+                str(file_path),
+            ]
+
+            # On Windows, asciidoctor is typically a .bat/.cmd shim
+            # installed by RubyGems, which requires shell=True to execute.
+            use_shell = platform.system() == "Windows"
+
             result = subprocess.run(
-                [
-                    "asciidoctor",
-                    "-b", "docbook",
-                    "-o", str(tmp_path),
-                    "--base-dir", str(file_path.parent),
-                    "--safe-mode", "unsafe",
-                    str(file_path),
-                ],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=30,
+                shell=use_shell,
             )
 
             if result.returncode != 0:
