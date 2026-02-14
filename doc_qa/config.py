@@ -226,11 +226,11 @@ _OPTIONAL_FACTORIES: dict[str, type] = {
 
 
 def config_to_dict(cfg: AppConfig) -> dict[str, Any]:
-    """Convert an AppConfig to a plain dict, redacting secrets.
+    """Convert an AppConfig to a plain dict.
 
     - ``None`` optional sections are omitted.
-    - ``cody.access_token_env`` value is replaced with ``"***"``
-      so credentials never leak to the browser.
+    - Note: ``cody.access_token_env`` is the env var *name* (e.g. "SRC_ACCESS_TOKEN"),
+      not the token itself, so it is safe to send to the browser.
     """
     result: dict[str, Any] = {}
     for f in dataclasses.fields(cfg):
@@ -238,10 +238,6 @@ def config_to_dict(cfg: AppConfig) -> dict[str, Any]:
         if value is None:
             continue
         result[f.name] = dataclasses.asdict(value)
-
-    # Redact the Cody access-token env-var name
-    if "cody" in result:
-        result["cody"]["access_token_env"] = "***"
 
     return result
 
@@ -256,9 +252,6 @@ def save_config(cfg: AppConfig, config_path: Path | None = None) -> None:
         config_path = Path("config.yaml")
 
     data = config_to_dict(cfg)
-    # Do NOT persist the redacted token — restore from live config
-    if "cody" in data:
-        data["cody"]["access_token_env"] = cfg.cody.access_token_env
 
     tmp = config_path.with_suffix(".yaml.tmp")
     with open(tmp, "w", encoding="utf-8") as f:

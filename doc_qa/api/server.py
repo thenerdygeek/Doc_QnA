@@ -322,6 +322,7 @@ def create_app(
                 workspace_root=repo_path,
                 ollama_host=cfg.ollama.host,
                 ollama_model=cfg.ollama.model,
+                cody_access_token_env=cfg.cody.access_token_env,
             )
 
     # ── Lifespan ─────────────────────────────────────────────────────

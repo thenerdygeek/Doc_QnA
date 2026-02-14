@@ -295,8 +295,9 @@ class CodyBackend(LLMBackend):
         model: str = "anthropic::2025-01-01::claude-3.5-sonnet",
         agent_binary: str | None = None,
         workspace_root: str | None = None,
+        access_token_env: str = "SRC_ACCESS_TOKEN",
     ) -> None:
-        self._access_token = access_token or os.environ.get("SRC_ACCESS_TOKEN", "")
+        self._access_token = access_token or os.environ.get(access_token_env, "")
         self._endpoint = endpoint
         self._model = model
         self._workspace_root = workspace_root or os.getcwd()
@@ -850,6 +851,7 @@ def create_backend(
     workspace_root: str | None = None,
     ollama_host: str = "http://localhost:11434",
     ollama_model: str = "qwen2.5:7b",
+    cody_access_token_env: str = "SRC_ACCESS_TOKEN",
 ) -> LLMBackend:
     """Create the configured LLM backend.
 
@@ -869,6 +871,7 @@ def create_backend(
             model=cody_model,
             agent_binary=cody_binary,
             workspace_root=workspace_root,
+            access_token_env=cody_access_token_env,
         )
 
     primary_backend = _make(primary)
