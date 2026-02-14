@@ -210,17 +210,19 @@ def create_app(
     if config is None:
         config = load_config()
 
-    config.doc_repo.path = repo_path
+    if repo_path:
+        config.doc_repo.path = repo_path
 
-    # Resolve db_path
-    db_path = resolve_db_path(config, repo_path)
+    # Resolve db_path (uses CWD-relative default when repo_path is empty)
+    effective_repo = config.doc_repo.path or "."
+    db_path = resolve_db_path(config, effective_repo)
 
     # Open index
     index = DocIndex(db_path=db_path, embedding_model=config.indexing.embedding_model)
     if index.count_rows() == 0:
         logger.warning(
-            "Index at '%s' is empty. You can index from the Settings UI or run 'doc-qa index %s'.",
-            db_path, repo_path,
+            "Index at '%s' is empty. You can index from the Settings UI or run 'doc-qa index <repo>'.",
+            db_path,
         )
 
     # Retriever (for retrieval-only endpoint)
@@ -256,6 +258,27 @@ def create_app(
         app.state.index = swap_result.index
         app.state.retriever = swap_result.retriever
         logger.info("Index hot-swapped to new build")
+
+    _NO_REPO_MSG = (
+        "No documentation repository is configured yet. "
+        "Go to Settings \u2192 Indexing to set a repository path and start indexing."
+    )
+
+    def _check_repo_ready() -> str | None:
+        """Return an error message if the repo is not configured or index is empty, else None."""
+        cfg = app.state.config
+        if not cfg.doc_repo.path:
+            return _NO_REPO_MSG
+        try:
+            if app.state.index.count_rows() == 0:
+                return (
+                    "The documentation index is empty. "
+                    "Go to Settings \u2192 Indexing and click Start Indexing, "
+                    "or run: doc-qa index <repo-path>"
+                )
+        except Exception:
+            return _NO_REPO_MSG
+        return None
 
     def _create_pipeline(history: list[dict]) -> QueryPipeline:
         """Create a QueryPipeline with given history.
@@ -401,6 +424,10 @@ def create_app(
         Supports multi-turn: pass session_id from a previous response
         to continue the conversation with history context.
         """
+        repo_err = _check_repo_ready()
+        if repo_err:
+            raise HTTPException(status_code=422, detail=repo_err)
+
         cfg = app.state.config
         if len(req.question) > cfg.retrieval.max_query_length:
             raise HTTPException(
@@ -508,6 +535,17 @@ def create_app(
 
         Emits phased events: status, intent, sources, answer, verified, done.
         """
+        repo_err = _check_repo_ready()
+        if repo_err:
+            from sse_starlette.sse import EventSourceResponse, ServerSentEvent
+
+            async def _repo_err():
+                yield ServerSentEvent(
+                    data=json.dumps({"error": repo_err, "type": "SetupRequired"}),
+                    event="error",
+                )
+            return EventSourceResponse(_repo_err())
+
         cfg = app.state.config
         if len(q) > cfg.retrieval.max_query_length:
             from sse_starlette.sse import EventSourceResponse, ServerSentEvent

@@ -298,15 +298,25 @@ def cmd_serve(args: argparse.Namespace) -> None:
 
     config = load_config(Path(args.config) if args.config else None)
 
-    repo_path = Path(args.repo)
-    if not repo_path.is_dir():
-        print(f"Error: '{repo_path}' is not a valid directory.", file=sys.stderr)
-        sys.exit(1)
+    # Resolve repo path: CLI flag → config.yaml → None (configure from UI)
+    repo_str: str | None = args.repo
+    if not repo_str and config.doc_repo.path:
+        repo_str = config.doc_repo.path
+
+    if repo_str:
+        repo_path = Path(repo_str)
+        if not repo_path.is_dir():
+            print(f"Error: '{repo_path}' is not a valid directory.", file=sys.stderr)
+            sys.exit(1)
+        repo_str = str(repo_path)
+    else:
+        print("No --repo specified and no doc_repo.path in config.yaml.")
+        print("Start the UI and configure the repository path in Settings > Indexing.\n")
 
     host = args.host or config.api.host
     port = args.port or config.api.port
 
-    app = create_app(repo_path=str(repo_path), config=config)
+    app = create_app(repo_path=repo_str or "", config=config)
     print(f"Starting server at http://{host}:{port}")
     print(f"API docs: http://{host}:{port}/docs")
     uvicorn.run(app, host=host, port=port)
@@ -357,7 +367,7 @@ def main() -> None:
 
     # serve command
     p_serve = sub.add_parser("serve", help="Start the API server")
-    p_serve.add_argument("--repo", help="Path to documentation repository", required=True)
+    p_serve.add_argument("--repo", help="Path to documentation repository (optional; falls back to config.yaml, or configure from Settings UI)", default=None)
     p_serve.add_argument("--host", help="Bind host", default=None)
     p_serve.add_argument("--port", help="Bind port", type=int, default=None)
     p_serve.set_defaults(func=cmd_serve)
