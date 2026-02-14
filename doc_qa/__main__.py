@@ -295,28 +295,128 @@ def _ensure_embedding_model(model_name: str) -> None:
 
     After this call, fastembed / huggingface_hub will NOT make any
     network requests — all model data is served from the local cache.
+
+    Download strategy (automatic fallback):
+      1. Try fastembed's built-in loader (uses HuggingFace Hub).
+      2. If that fails, download from Google Cloud Storage and retry.
+      3. If both fail, print instructions and exit.
     """
     import os
 
-    from doc_qa.indexing.embedder import _get_model
+    from doc_qa.indexing.embedder import (
+        _get_model,
+        download_model_from_gcs,
+        get_cache_dir,
+    )
 
-    print(f"Loading embedding model: {model_name} ...")
+    cache_dir = get_cache_dir()
+    print(f"Loading embedding model: {model_name}")
+    print(f"  Cache: {cache_dir}")
+
+    # ── Attempt 1: fastembed's built-in loader ──
     try:
         _get_model(model_name)
-        print("Embedding model ready (cached).")
-    except Exception as e:
-        print(f"Error: Failed to load embedding model: {e}", file=sys.stderr)
-        print(
-            "The model may need to be downloaded first (requires internet).\n"
-            "Run with internet once:  doc-qa serve\n"
-            "After the model is cached, the tool works fully offline.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        print("Embedding model ready.\n")
+    except Exception as first_err:
+        # ── Attempt 2: download from GCS and retry ──
+        print(f"\n  Standard download failed: {first_err}")
+        print("  Trying alternative download from Google Cloud Storage...")
+        try:
+            download_model_from_gcs(model_name, cache_dir)
+            _get_model(model_name)
+            print("Embedding model ready (via GCS).\n")
+        except Exception as gcs_err:
+            print(f"\nError: All automatic download methods failed.", file=sys.stderr)
+            print(f"  Standard: {first_err}", file=sys.stderr)
+            print(f"  GCS:      {gcs_err}", file=sys.stderr)
+            print(
+                "\nThe embedding model (~90 MB) must be downloaded once.\n"
+                "\n"
+                "Option 1 — Run the download command (with internet):\n"
+                "  doc-qa download-model\n"
+                "\n"
+                "Option 2 — Manual browser download:\n"
+                "  1. Download this file in your browser:\n"
+                "     https://storage.googleapis.com/qdrant-fastembed/sentence-transformers-all-MiniLM-L6-v2.tar.gz\n"
+                "  2. Extract the tar.gz into the cache directory below.\n"
+                "     You should end up with:\n"
+                f"       {cache_dir}/fast-all-MiniLM-L6-v2/model.onnx\n"
+                "     On Windows (PowerShell):\n"
+                f'       tar -xzf sentence-transformers-all-MiniLM-L6-v2.tar.gz -C "{cache_dir}"\n'
+                "     On macOS/Linux:\n"
+                f'       tar -xzf sentence-transformers-all-MiniLM-L6-v2.tar.gz -C "{cache_dir}"\n'
+                "\n"
+                "Option 3 — Copy from another machine:\n"
+                "  Copy the data/models/ folder from a machine that already has the model.\n"
+                f"\nCache directory: {cache_dir}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     # Lock down: no more network calls from fastembed / huggingface_hub
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
+
+def cmd_download_model(args: argparse.Namespace) -> None:
+    """Download the embedding model for offline use.
+
+    Uses Google Cloud Storage directly — more reliable on corporate
+    networks where HuggingFace may be blocked or throttled.
+    """
+    config = load_config(Path(args.config) if args.config else None)
+    model_name = config.indexing.embedding_model
+
+    from doc_qa.indexing.embedder import (
+        _get_model,
+        download_model_from_gcs,
+        embed_texts,
+        get_cache_dir,
+    )
+
+    cache_dir = get_cache_dir()
+    print(f"Downloading embedding model: {model_name}")
+    print(f"  Cache directory: {cache_dir}\n")
+
+    try:
+        # Download from GCS (bypasses HuggingFace entirely)
+        download_model_from_gcs(model_name, cache_dir)
+
+        # Load into fastembed to verify it works
+        _get_model(model_name)
+
+        # Quick sanity check — embed a test string
+        vecs = embed_texts(["test"])
+        print(f"\nModel downloaded and verified (dim={len(vecs[0])}).")
+        print(f"Cache: {cache_dir}")
+        print("\nYou can now run 'doc-qa serve' offline.")
+        print("To use on another machine, copy the data/models/ folder.")
+    except Exception as e:
+        print(f"\nError: {e}", file=sys.stderr)
+        print(
+            "\nAutomatic download failed. Manual steps:\n"
+            "\n"
+            "Option 1 — Manual browser download:\n"
+            "  1. Download this file in your browser:\n"
+            "     https://storage.googleapis.com/qdrant-fastembed/sentence-transformers-all-MiniLM-L6-v2.tar.gz\n"
+            "  2. Extract the tar.gz into the cache directory below.\n"
+            "     You should end up with:\n"
+            f"       {cache_dir}/fast-all-MiniLM-L6-v2/model.onnx\n"
+            "     On Windows (PowerShell):\n"
+            f'       tar -xzf sentence-transformers-all-MiniLM-L6-v2.tar.gz -C "{cache_dir}"\n'
+            "     On macOS/Linux:\n"
+            f'       tar -xzf sentence-transformers-all-MiniLM-L6-v2.tar.gz -C "{cache_dir}"\n'
+            "\n"
+            "Option 2 — Behind a corporate proxy:\n"
+            "  set HTTPS_PROXY=http://your-proxy:8080\n"
+            "  doc-qa download-model\n"
+            "\n"
+            "Option 3 — Copy from another machine:\n"
+            "  Copy the data/models/ folder from a machine that already has the model.\n"
+            f"\nCache directory: {cache_dir}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
@@ -405,6 +505,10 @@ def main() -> None:
     p_db.add_argument("action", choices=["upgrade", "downgrade"], help="Migration action")
     p_db.add_argument("revision", nargs="?", default=None, help="Target revision (default: head/−1)")
     p_db.set_defaults(func=cmd_db)
+
+    # download-model command
+    p_dl = sub.add_parser("download-model", help="Download the embedding model (run once with internet)")
+    p_dl.set_defaults(func=cmd_download_model)
 
     # serve command
     p_serve = sub.add_parser("serve", help="Start the API server")

@@ -30,6 +30,9 @@ Your docs  ──►  Index (LanceDB)  ──►  Hybrid search  ──►  LLM 
 - [Supported Document Formats](#supported-document-formats)
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
+  - [Embedding Model Download Fails](#embedding-model-download-fails)
+  - [Corrupt Embedding Model Cache](#corrupt-embedding-model-cache)
+  - [Offline Usage](#offline-usage)
 
 ---
 
@@ -67,7 +70,12 @@ pip install -e ".[dev]"
 
 # If you want Ollama support:
 pip install -e ".[ollama]"
+
+# Create your local config from the template
+cp config.yaml.example config.yaml
 ```
+
+> **Note:** `config.yaml` is gitignored (machine-specific). Each machine gets its own copy from the template.
 
 ### 2. Set your LLM token
 
@@ -115,11 +123,23 @@ cd ..
 
 This produces an optimized SPA in `frontend/dist/`.
 
-### 5. Start the server
+### 5. Download the embedding model (one-time)
+
+The embedding model (~90 MB) is needed for indexing and search. It downloads automatically on first run, but if you're on a restricted network you can download it explicitly:
+
+```bash
+doc-qa download-model
+```
+
+The model is cached in `data/models/` inside the project — it only downloads once and works offline after that. See [Embedding Model Download Fails](#embedding-model-download-fails) if you have trouble.
+
+### 6. Start the server
 
 ```bash
 doc-qa serve --repo /path/to/your/docs
 ```
+
+The `--repo` flag is **optional**. Without it, the server starts and you can configure the repository path from the **Settings > Indexing** tab in the web UI.
 
 Open **http://localhost:8000** in your browser. You'll see:
 
@@ -127,7 +147,7 @@ Open **http://localhost:8000** in your browser. You'll see:
 - A guided tour on first visit that walks through the settings
 - A chat interface with streaming answers
 
-### 6. (Optional) Set up diagram validation
+### 7. (Optional) Set up diagram validation
 
 For full Mermaid diagram syntax validation with Node.js:
 
@@ -316,13 +336,29 @@ Options:
 ### `serve` — Start the web server
 
 ```bash
-doc-qa serve --repo /path/to/docs [--host 127.0.0.1] [--port 8000]
+doc-qa serve [--repo /path/to/docs] [--host 127.0.0.1] [--port 8000]
 ```
 
-Starts a FastAPI server that serves both the API and the web UI.
+Starts a FastAPI server that serves both the API and the web UI. The `--repo` flag is optional — if omitted, the server falls back to `doc_repo.path` in `config.yaml`, or starts without a repo (configurable from the Settings UI).
+
+On startup, the server pre-downloads the embedding model if needed and then enables **offline mode** — no further internet calls are made (except for Cody/Ollama LLM backends).
 
 - **UI**: http://localhost:8000
 - **API docs (Swagger)**: http://localhost:8000/docs
+
+### `download-model` — Download the embedding model
+
+```bash
+doc-qa download-model
+```
+
+Downloads the embedding model from Google Cloud Storage (~90 MB, one-time) and stores it in `data/models/`. This is useful when:
+
+- You're setting up on a new machine
+- The automatic download during `serve` failed (e.g., corporate proxy)
+- You want to pre-download before going offline
+
+After downloading, you can copy the `data/models/` folder to other machines for fully offline setup.
 
 ### `eval` — Evaluate retrieval quality
 
@@ -384,7 +420,9 @@ The tour can be restarted anytime from the **"Take a Tour"** link at the bottom 
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
 | `SRC_ACCESS_TOKEN` | If using Cody | — | Sourcegraph access token |
+| `SRC_ENDPOINT` | No | `https://sourcegraph.com` | Sourcegraph instance URL |
 | `DOC_QA_DATABASE_URL` | No | — | PostgreSQL URL (overrides config) |
+| `FASTEMBED_CACHE_PATH` | No | `data/models/` | Override the embedding model cache directory |
 | `CODY_AGENT_BINARY` | No | auto-download | Path to Cody agent binary |
 | `CODY_AGENT_TRACE_PATH` | No | — | Write JSON-RPC trace log (debug) |
 
@@ -645,10 +683,13 @@ doc_qa_tool/
 │   │   └── test/               # Frontend tests
 │   ├── package.json
 │   └── vite.config.ts
+├── data/
+│   └── models/                 # Embedding model cache (auto-downloaded)
 ├── scripts/
 │   └── validate_mermaid.mjs    # Node.js Mermaid syntax validator
 ├── tests/                      # Backend tests (pytest)
-├── config.yaml                 # Application configuration
+├── config.yaml                 # Application configuration (gitignored, machine-specific)
+├── config.yaml.example         # Template for config.yaml
 ├── alembic.ini                 # Migration configuration
 └── pyproject.toml              # Python package metadata
 ```
@@ -726,13 +767,118 @@ Make sure your documentation files match these patterns and aren't in excluded d
 2. For best validation, install the Node.js validator: `cd scripts && npm install`
 3. The frontend renders Mermaid diagrams from ` ```mermaid ` code fences in the answer — they should appear as interactive SVGs
 
+### Embedding model download fails
+
+The embedding model (`all-MiniLM-L6-v2`, ~90 MB) is required for indexing and search. On startup, `doc-qa serve` tries two automatic download methods:
+
+1. **HuggingFace Hub** (default fastembed behavior)
+2. **Google Cloud Storage** (fallback — more reliable on corporate networks)
+
+If both fail (e.g., heavily restricted network, proxy issues), you have three manual options:
+
+#### Option A — Manual browser download
+
+1. Download this file in your browser:
+   ```
+   https://storage.googleapis.com/qdrant-fastembed/sentence-transformers-all-MiniLM-L6-v2.tar.gz
+   ```
+
+2. Extract it into the `data/models/` directory inside the project:
+
+   **Windows (PowerShell):**
+   ```powershell
+   tar -xzf sentence-transformers-all-MiniLM-L6-v2.tar.gz -C "data\models"
+   ```
+
+   **macOS / Linux:**
+   ```bash
+   tar -xzf sentence-transformers-all-MiniLM-L6-v2.tar.gz -C data/models
+   ```
+
+3. Verify the extracted structure — you should see:
+   ```
+   data/models/fast-all-MiniLM-L6-v2/
+   ├── model.onnx          (~90 MB)
+   ├── config.json
+   ├── tokenizer.json
+   ├── special_tokens_map.json
+   └── tokenizer_config.json
+   ```
+
+4. Run `doc-qa serve` again — it should now load the model from the local cache.
+
+#### Option B — Corporate proxy
+
+If your network requires a proxy, set the proxy environment variable before downloading:
+
+**Windows (PowerShell):**
+```powershell
+$env:HTTPS_PROXY = "http://your-proxy:8080"
+doc-qa download-model
+```
+
+**macOS / Linux:**
+```bash
+export HTTPS_PROXY=http://your-proxy:8080
+doc-qa download-model
+```
+
+#### Option C — Copy from another machine
+
+If you have the model on another machine, copy the entire `data/models/` folder:
+
+```bash
+# On the machine that has the model:
+# zip or tar the data/models/ directory, then copy it to the new machine
+
+# On the new machine, place it at:
+#   <project-root>/data/models/fast-all-MiniLM-L6-v2/
+```
+
+### Corrupt embedding model cache
+
+If the model download was interrupted (partial download), you may see errors like:
+
+```
+[ONNXRuntimeError] : 3 : NO_SUCHFILE : Load model from ... model.onnx failed
+```
+
+The tool automatically cleans up corrupt caches on startup, but if the issue persists:
+
+1. Delete the cache directory:
+   ```bash
+   rm -rf data/models/
+   ```
+   On Windows:
+   ```powershell
+   Remove-Item -Recurse -Force data\models
+   ```
+
+2. Re-download:
+   ```bash
+   doc-qa download-model
+   ```
+
 ### Slow first query
 
 The first query triggers lazy initialization:
-- Embedding model download (~22 MB for `all-MiniLM-L6-v2`)
 - LLM backend connection (Cody agent startup or Ollama connection)
 
-Subsequent queries are much faster.
+The embedding model is pre-loaded during `doc-qa serve` startup, so it doesn't slow down the first query.
+
+### Offline usage
+
+After `doc-qa serve` starts successfully, the tool operates **fully offline** — no internet calls are made except for:
+
+- **Cody** LLM backend (connects to Sourcegraph)
+- **Ollama** LLM backend (connects to your local Ollama instance)
+
+The embedding model, index, and all retrieval happen locally. To set up for a fully offline environment:
+
+1. Run `doc-qa download-model` once with internet
+2. Index your docs: `doc-qa index /path/to/docs`
+3. Disconnect from internet
+4. Run `doc-qa serve` — works offline (use Ollama for fully local LLM)
 
 ---
 

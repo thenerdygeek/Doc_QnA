@@ -1,9 +1,17 @@
-"""FastEmbed wrapper for generating text embeddings."""
+"""FastEmbed wrapper for generating text embeddings.
+
+The embedding model is cached in a **project-local** directory
+(``data/models/``) so it can be copied between machines and works
+fully offline after the first download.
+"""
 
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 import threading
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -13,7 +21,118 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Lazy singleton — model is loaded on first use
+# ── Model cache ──────────────────────────────────────────────────────
+# Project-local cache so the model can be copied between machines.
+# Resolve relative to the package root (3 levels up from this file).
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_DEFAULT_CACHE_DIR = str(_PROJECT_ROOT / "data" / "models")
+
+
+def get_cache_dir() -> str:
+    """Return the model cache directory (project-local by default)."""
+    return os.environ.get("FASTEMBED_CACHE_PATH", _DEFAULT_CACHE_DIR)
+
+
+# ── Mapping: model name → GCS tar.gz URL and expected dir name ───────
+_MODEL_GCS_INFO: dict[str, dict[str, str]] = {
+    "sentence-transformers/all-MiniLM-L6-v2": {
+        "url": "https://storage.googleapis.com/qdrant-fastembed/sentence-transformers-all-MiniLM-L6-v2.tar.gz",
+        "dir_name": "fast-all-MiniLM-L6-v2",
+        "hf_dir_name": "models--qdrant--all-MiniLM-L6-v2-onnx",
+    },
+}
+
+
+def _cleanup_corrupt_hf_cache(cache_dir: str, model_name: str) -> None:
+    """Remove corrupt HuggingFace cache (incomplete downloads).
+
+    Fastembed tries the HF cache first. If a previous download was
+    interrupted, the HF directory exists but model.onnx is missing.
+    Removing it lets fastembed fall through to the GCS tar.gz layout.
+    """
+    info = _MODEL_GCS_INFO.get(model_name)
+    if not info:
+        return
+
+    hf_dir = Path(cache_dir) / info["hf_dir_name"]
+    if not hf_dir.exists():
+        return
+
+    # Check if model.onnx exists anywhere in the HF cache tree
+    onnx_files = list(hf_dir.rglob("model.onnx"))
+    if onnx_files:
+        # Check file size — a valid model.onnx is > 10 MB
+        for f in onnx_files:
+            if f.stat().st_size > 10_000_000:
+                return  # Valid cache, don't touch it
+
+    # Corrupt / incomplete — remove it
+    logger.info("Removing corrupt HF cache: %s", hf_dir)
+    shutil.rmtree(hf_dir, ignore_errors=True)
+
+
+def download_model_from_gcs(model_name: str, cache_dir: str | None = None) -> Path:
+    """Download the embedding model from Google Cloud Storage.
+
+    This bypasses HuggingFace entirely — more reliable on corporate
+    networks since GCS URLs are less likely to be blocked by proxies.
+
+    Returns the path to the extracted model directory.
+    """
+    import tarfile
+
+    import requests
+
+    cache = cache_dir or get_cache_dir()
+    info = _MODEL_GCS_INFO.get(model_name)
+    if not info:
+        raise ValueError(f"No GCS download URL known for model: {model_name}")
+
+    model_dir = Path(cache) / info["dir_name"]
+
+    # Already downloaded?
+    if model_dir.exists() and any(model_dir.glob("model.onnx")):
+        logger.info("Model already cached at %s", model_dir)
+        return model_dir
+
+    os.makedirs(cache, exist_ok=True)
+    tar_path = Path(cache) / f"{info['dir_name']}.tar.gz"
+
+    print(f"  Downloading from: {info['url']}")
+    print(f"  This is a one-time ~90 MB download...")
+
+    # Stream download with progress
+    resp = requests.get(info["url"], stream=True, timeout=300)
+    resp.raise_for_status()
+    total = int(resp.headers.get("content-length", 0))
+    downloaded = 0
+
+    with open(tar_path, "wb") as f:
+        for chunk in resp.iter_content(chunk_size=8192):
+            f.write(chunk)
+            downloaded += len(chunk)
+            if total:
+                pct = downloaded * 100 // total
+                mb = downloaded / 1024 / 1024
+                print(f"\r  Progress: {pct}% ({mb:.1f} MB)", end="", flush=True)
+
+    print()  # newline after progress
+
+    # Extract
+    print("  Extracting...")
+    with tarfile.open(tar_path, "r:gz") as tar:
+        tar.extractall(path=cache)
+
+    # Clean up tar.gz
+    tar_path.unlink(missing_ok=True)
+
+    if not model_dir.exists():
+        raise RuntimeError(f"Expected model directory not found after extraction: {model_dir}")
+
+    return model_dir
+
+
+# ── Lazy singleton ───────────────────────────────────────────────────
 _model: object | None = None
 _model_name: str = ""
 _model_lock = threading.Lock()
@@ -28,10 +147,16 @@ def _get_model(model_name: str = "sentence-transformers/all-MiniLM-L6-v2") -> ob
         # Double-check after acquiring lock
         if _model is not None and _model_name == model_name:
             return _model
+
+        cache_dir = get_cache_dir()
+
+        # Clean up any corrupt HF cache before loading
+        _cleanup_corrupt_hf_cache(cache_dir, model_name)
+
         from fastembed import TextEmbedding
 
-        logger.info("Loading embedding model: %s", model_name)
-        _model = TextEmbedding(model_name)
+        logger.info("Loading embedding model: %s (cache: %s)", model_name, cache_dir)
+        _model = TextEmbedding(model_name, cache_dir=cache_dir)
         _model_name = model_name
         logger.info("Embedding model loaded.")
         return _model
