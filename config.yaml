@@ -1,0 +1,61 @@
+doc_repo:
+  path: /Users/subhankarhalder/Desktop/Programs/Cody/doc_qa_tool/tests/integration_data
+  patterns:
+  - '**/*.adoc'
+  - '**/*.md'
+  - '**/*.puml'
+  - '**/*.pdf'
+  exclude:
+  - '**/build/**'
+  - '**/target/**'
+  - '**/node_modules/**'
+  - '**/.git/**'
+indexing:
+  db_path: ./data/doc_qa_db
+  chunk_size: 512
+  chunk_overlap: 50
+  min_chunk_size: 100
+  embedding_model: sentence-transformers/all-MiniLM-L6-v2
+retrieval:
+  search_mode: hybrid
+  top_k: 5
+  candidate_pool: 20
+  min_score: 0.3
+  max_chunks_per_file: 2
+  rerank: true
+  max_query_length: 2000
+  max_history_turns: 10
+llm:
+  primary: ollama
+  fallback: cody
+cody:
+  access_token_env: '***'
+  endpoint: https://sourcegraph.com
+  agent_binary: null
+  model: anthropic::2025-01-01::claude-3.5-sonnet
+ollama:
+  host: http://localhost:11434
+  model: qwen2.5:3b
+api:
+  host: 127.0.0.1
+  port: 8000
+  cors_origins:
+  - '*'
+  session_ttl: 1800
+intelligence:
+  enable_intent_classification: true
+  intent_confidence_high: 0.85
+  intent_confidence_medium: 0.65
+  enable_multi_intent: true
+  max_sub_queries: 3
+generation:
+  enable_diagrams: true
+  mermaid_validation: auto
+  node_script_path: scripts/validate_mermaid.mjs
+  max_diagram_retries: 3
+verification:
+  enable_verification: true
+  enable_crag: false
+  confidence_threshold: 0.4
+  max_crag_rewrites: 2
+  abstain_on_low_confidence: true

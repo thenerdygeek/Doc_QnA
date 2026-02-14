@@ -1,0 +1,53 @@
+[project]
+name = "doc-qa-tool"
+version = "0.1.0"
+description = "Documentation Q&A tool powered by RAG + Cody AI"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
+    "lancedb>=0.16",
+    "fastembed>=0.5",
+    "numpy>=1.24",
+    "pyarrow>=12.0",
+    "pdfplumber>=0.11",
+    "mistletoe>=1.4",
+    "pyyaml>=6.0",
+    "pydantic>=2.10",
+    "httpx>=0.27",
+    "sse-starlette>=2.1",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+]
+
+[project.optional-dependencies]
+ollama = [
+    "ollama>=0.4",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+]
+
+[project.scripts]
+doc-qa = "doc_qa.__main__:main"
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["doc_qa*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

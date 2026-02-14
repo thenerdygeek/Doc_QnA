@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@a24z/mermaid-parser": "^0.1.0"
+  }
+}

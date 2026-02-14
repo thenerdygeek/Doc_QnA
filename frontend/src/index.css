@@ -1,0 +1,467 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-surface-elevated: var(--surface-elevated);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", monospace;
+  --animate-in: enter 0.2s ease-out;
+  --animate-out: exit 0.15s ease-in forwards;
+}
+
+/* ── shadcn/ui animation keyframes ──────────────────────────── */
+@keyframes enter {
+  from {
+    opacity: var(--tw-enter-opacity, 1);
+    transform: translate3d(
+        var(--tw-enter-translate-x, 0),
+        var(--tw-enter-translate-y, 0),
+        0
+      )
+      scale3d(
+        var(--tw-enter-scale, 1),
+        var(--tw-enter-scale, 1),
+        var(--tw-enter-scale, 1)
+      )
+      rotate(var(--tw-enter-rotate, 0));
+  }
+}
+
+@keyframes exit {
+  to {
+    opacity: var(--tw-exit-opacity, 1);
+    transform: translate3d(
+        var(--tw-exit-translate-x, 0),
+        var(--tw-exit-translate-y, 0),
+        0
+      )
+      scale3d(
+        var(--tw-exit-scale, 1),
+        var(--tw-exit-scale, 1),
+        var(--tw-exit-scale, 1)
+      )
+      rotate(var(--tw-exit-rotate, 0));
+  }
+}
+
+/* Animation utility classes used by shadcn Dialog/Select/etc. */
+.fade-in-0 { --tw-enter-opacity: 0; }
+.fade-out-0 { --tw-exit-opacity: 0; }
+.zoom-in-95 { --tw-enter-scale: 0.95; }
+.zoom-out-95 { --tw-exit-scale: 0.95; }
+.slide-in-from-top-2 { --tw-enter-translate-y: -0.5rem; }
+.slide-in-from-bottom-2 { --tw-enter-translate-y: 0.5rem; }
+.slide-in-from-left-2 { --tw-enter-translate-x: -0.5rem; }
+.slide-in-from-right-2 { --tw-enter-translate-x: 0.5rem; }
+
+/* ── Light mode (warm white + rich indigo) ───────────────────── */
+:root {
+  --background: oklch(0.985 0.003 80);
+  --foreground: oklch(0.13 0.028 265);
+  --card: oklch(0.995 0.002 80);
+  --card-foreground: oklch(0.13 0.028 265);
+  --popover: oklch(0.995 0.002 80);
+  --popover-foreground: oklch(0.13 0.028 265);
+  --primary: oklch(0.44 0.18 265);
+  --primary-foreground: oklch(0.98 0.003 265);
+  --secondary: oklch(0.955 0.012 265);
+  --secondary-foreground: oklch(0.25 0.05 265);
+  --muted: oklch(0.955 0.008 265);
+  --muted-foreground: oklch(0.50 0.02 265);
+  --accent: oklch(0.955 0.012 265);
+  --accent-foreground: oklch(0.25 0.05 265);
+  --destructive: oklch(0.55 0.22 27);
+  --border: oklch(0.91 0.012 265);
+  --input: oklch(0.91 0.012 265);
+  --ring: oklch(0.52 0.18 265);
+  --radius: 0.75rem;
+  --surface-elevated: oklch(0.99 0.002 80);
+}
+
+/* ── Dark mode (deep space navy + periwinkle) ────────────────── */
+.dark {
+  --background: oklch(0.14 0.025 265);
+  --foreground: oklch(0.93 0.008 80);
+  --card: oklch(0.17 0.025 265);
+  --card-foreground: oklch(0.93 0.008 80);
+  --popover: oklch(0.17 0.025 265);
+  --popover-foreground: oklch(0.93 0.008 80);
+  --primary: oklch(0.70 0.14 265);
+  --primary-foreground: oklch(0.14 0.025 265);
+  --secondary: oklch(0.20 0.025 265);
+  --secondary-foreground: oklch(0.88 0.01 265);
+  --muted: oklch(0.20 0.02 265);
+  --muted-foreground: oklch(0.62 0.02 265);
+  --accent: oklch(0.20 0.025 265);
+  --accent-foreground: oklch(0.88 0.01 265);
+  --destructive: oklch(0.65 0.19 25);
+  --border: oklch(0.24 0.025 265);
+  --input: oklch(0.24 0.025 265);
+  --ring: oklch(0.70 0.14 265);
+  --surface-elevated: oklch(0.19 0.025 265);
+}
+
+/* ── Base styles ─────────────────────────────────────────────── */
+html {
+  color-scheme: light dark;
+}
+
+body {
+  @apply bg-background text-foreground font-sans antialiased;
+  /* iOS safe areas for notch / Dynamic Island / home indicator */
+  padding-top: env(safe-area-inset-top);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* ── Touch device optimizations ────────────────────────────── */
+@media (pointer: coarse) {
+  /* Ensure minimum 44px touch targets */
+  button, [role="button"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Disable hover effects on touch (avoids sticky :hover) */
+  .group:hover {
+    --tw-shadow: 0 0 #0000;
+  }
+}
+
+/* ── Smooth theme transition ─────────────────────────────────── */
+html.transitioning,
+html.transitioning *,
+html.transitioning *::before,
+html.transitioning *::after {
+  transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease !important;
+}
+
+/* ── Gradient text utility ───────────────────────────────────── */
+.gradient-text {
+  background: linear-gradient(135deg, var(--primary) 0%, oklch(0.55 0.2 290) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.dark .gradient-text {
+  background: linear-gradient(135deg, oklch(0.75 0.14 265) 0%, oklch(0.72 0.18 290) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Glass surface utility ───────────────────────────────────── */
+.glass {
+  background: oklch(1 0 0 / 0.7);
+  backdrop-filter: blur(16px) saturate(1.8);
+  -webkit-backdrop-filter: blur(16px) saturate(1.8);
+}
+
+.dark .glass {
+  background: oklch(0.17 0.025 265 / 0.7);
+}
+
+/* ── Answer prose (Streamdown output) ────────────────────────── */
+.answer-prose {
+  @apply text-sm leading-relaxed;
+}
+
+.answer-prose h1,
+.answer-prose h2,
+.answer-prose h3,
+.answer-prose h4 {
+  @apply font-semibold text-foreground;
+}
+
+.answer-prose h1 {
+  @apply mt-6 mb-3 text-lg;
+}
+.answer-prose h2 {
+  @apply mt-5 mb-2.5 text-base;
+}
+.answer-prose h3 {
+  @apply mt-4 mb-2 text-sm;
+}
+
+.answer-prose p {
+  @apply mb-3 leading-relaxed;
+}
+
+.answer-prose ul,
+.answer-prose ol {
+  @apply mb-3 ml-5 space-y-1;
+}
+.answer-prose ul {
+  @apply list-disc;
+}
+.answer-prose ol {
+  @apply list-decimal;
+}
+
+.answer-prose li {
+  @apply leading-relaxed;
+}
+
+.answer-prose li > p {
+  @apply mb-1;
+}
+
+.answer-prose code:not(pre code) {
+  @apply rounded-md bg-primary/8 px-1.5 py-0.5 text-[0.8125rem] font-mono text-primary;
+}
+
+.dark .answer-prose code:not(pre code) {
+  @apply bg-primary/15;
+}
+
+.answer-prose pre {
+  @apply my-4 overflow-x-auto rounded-xl border border-border/60 p-4 text-[0.8125rem];
+  position: relative;
+  background: oklch(0.96 0.005 265);
+}
+
+.dark .answer-prose pre {
+  background: oklch(0.12 0.02 265);
+}
+
+.answer-prose blockquote {
+  @apply my-4 border-l-2 border-primary/30 pl-4 italic text-muted-foreground;
+}
+
+.answer-prose table {
+  @apply my-4 w-full border-collapse text-sm;
+}
+
+.answer-prose th {
+  @apply border-b-2 border-border px-3 py-2 text-left font-semibold text-foreground;
+}
+
+.answer-prose td {
+  @apply border-b border-border/50 px-3 py-2;
+}
+
+.answer-prose tr:hover td {
+  @apply bg-muted/50;
+}
+
+.answer-prose a {
+  @apply text-primary underline underline-offset-2 decoration-primary/30 hover:decoration-primary/60 transition-colors;
+}
+
+.answer-prose hr {
+  @apply my-6 border-border/60;
+}
+
+.answer-prose strong {
+  @apply font-semibold text-foreground;
+}
+
+.answer-prose img {
+  @apply my-4 rounded-lg;
+}
+
+/* Mermaid diagram container */
+.answer-prose svg.mermaid {
+  @apply my-4 mx-auto max-w-full;
+}
+
+/* ── Streaming sparkle animation ────────────────────────────── */
+
+/* Custom sparkle keyframe — new tokens glow briefly as they appear */
+@keyframes sd-sparkle-in {
+  0% {
+    opacity: 0;
+    filter: brightness(1.6) blur(1px);
+    text-shadow: 0 0 10px oklch(0.60 0.20 265 / 0.8),
+                 0 0 20px oklch(0.60 0.20 265 / 0.3);
+  }
+  35% {
+    opacity: 1;
+    filter: brightness(1.25) blur(0);
+    text-shadow: 0 0 6px oklch(0.60 0.20 265 / 0.4);
+  }
+  100% {
+    opacity: 1;
+    filter: brightness(1);
+    text-shadow: none;
+  }
+}
+
+/* Dark mode: brighter sparkle against dark background */
+@keyframes sd-sparkle-in-dark {
+  0% {
+    opacity: 0;
+    filter: brightness(2) blur(1px);
+    text-shadow: 0 0 12px oklch(0.72 0.17 265 / 0.9),
+                 0 0 24px oklch(0.72 0.17 265 / 0.4);
+  }
+  35% {
+    opacity: 1;
+    filter: brightness(1.4) blur(0);
+    text-shadow: 0 0 8px oklch(0.72 0.17 265 / 0.5);
+  }
+  100% {
+    opacity: 1;
+    filter: brightness(1);
+    text-shadow: none;
+  }
+}
+
+/* Override Streamdown's default animation when streaming */
+.answer-prose.is-streaming [data-sd-animate] {
+  --sd-animation: sd-sparkle-in;
+  --sd-duration: 400ms;
+  --sd-easing: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.dark .answer-prose.is-streaming [data-sd-animate] {
+  --sd-animation: sd-sparkle-in-dark;
+}
+
+/* Subtle left border glow on the streaming container */
+.answer-prose.is-streaming {
+  position: relative;
+  border-left: 2px solid transparent;
+  padding-left: 12px;
+  border-image: linear-gradient(
+    to bottom,
+    oklch(0.55 0.18 265 / 0.6),
+    oklch(0.55 0.18 265 / 0.1)
+  ) 1;
+  animation: border-pulse 2s ease-in-out infinite;
+}
+
+@keyframes border-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* Blinking cursor with glow */
+.streaming-cursor {
+  display: inline;
+  font-weight: 200;
+  font-size: 1.1em;
+  line-height: 1;
+  color: oklch(0.55 0.18 265);
+  animation: cursor-blink 0.9s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  text-shadow: 0 0 8px oklch(0.55 0.18 265 / 0.6);
+}
+
+.dark .streaming-cursor {
+  color: oklch(0.72 0.17 265);
+  text-shadow: 0 0 10px oklch(0.72 0.17 265 / 0.7);
+}
+
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+
+/* Reduce motion for users who prefer it */
+@media (prefers-reduced-motion: reduce) {
+  .answer-prose.is-streaming [data-sd-animate] {
+    --sd-animation: sd-fadeIn;
+    --sd-duration: 100ms;
+  }
+  .streaming-cursor {
+    animation: none;
+    opacity: 1;
+  }
+  .answer-prose.is-streaming {
+    animation: none;
+  }
+}
+
+/* ── Code block copy button ──────────────────────────────────── */
+.copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s, background-color 0.15s, color 0.15s;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  border: 1px solid var(--border);
+}
+
+.answer-prose pre:hover .copy-btn {
+  opacity: 1;
+}
+
+.copy-btn:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.copy-btn.copied {
+  background: oklch(0.65 0.17 155);
+  color: white;
+  border-color: transparent;
+  opacity: 1;
+}
+
+/* ── Scrollbar ───────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: oklch(0.85 0.008 265);
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: oklch(0.30 0.02 265);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.75 0.01 265);
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.40 0.02 265);
+}
+
+/* ── Selection ───────────────────────────────────────────────── */
+::selection {
+  background: oklch(0.52 0.18 265 / 0.2);
+}
+
+.dark ::selection {
+  background: oklch(0.70 0.14 265 / 0.25);
+}

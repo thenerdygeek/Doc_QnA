@@ -1,0 +1,44 @@
+doc_repo:
+  path: /Users/subhankarhalder/Desktop/Programs/Cody/doc_qa_tool
+  patterns:
+  - '**/*.adoc'
+  - '**/*.md'
+  - '**/*.puml'
+  - '**/*.pdf'
+  exclude:
+  - '**/build/**'
+  - '**/target/**'
+  - '**/node_modules/**'
+  - '**/.git/**'
+indexing:
+  db_path: ./data/doc_qa_db
+  chunk_size: 512
+  chunk_overlap: 50
+  min_chunk_size: 100
+  embedding_model: sentence-transformers/all-MiniLM-L6-v2
+retrieval:
+  search_mode: hybrid
+  top_k: 5
+  candidate_pool: 20
+  min_score: 0.3
+  max_chunks_per_file: 2
+  rerank: true
+  max_query_length: 2000
+  max_history_turns: 10
+llm:
+  primary: cody
+  fallback: ollama
+cody:
+  access_token_env: SRC_ACCESS_TOKEN
+  endpoint: https://sourcegraph.com
+  agent_binary: null
+  model: anthropic::2025-01-01::claude-3.5-sonnet
+ollama:
+  host: http://localhost:11434
+  model: qwen2.5:7b
+api:
+  host: 127.0.0.1
+  port: 8000
+  cors_origins:
+  - '*'
+  session_ttl: 1800

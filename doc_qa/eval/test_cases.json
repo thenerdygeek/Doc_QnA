@@ -1,0 +1,180 @@
+{
+    "description": "Retrieval evaluation test cases for the Cody documentation repo",
+    "test_cases": [
+        {
+            "question": "How does the agentic loop work in Claude Code?",
+            "relevant_files": ["AGENTIC_AI_CODING_TOOLS_RESEARCH.md"],
+            "relevant_keywords": ["agentic", "loop", "Claude Code"],
+            "difficulty": "easy",
+            "description": "Direct topic match in research doc"
+        },
+        {
+            "question": "What is the JSON-RPC protocol used by Cody agent?",
+            "relevant_files": ["JSONRPC_PROTOCOL_RESEARCH.md", "CODY_AGENT_RESEARCH.md"],
+            "relevant_keywords": ["JSON-RPC", "protocol", "stdio"],
+            "difficulty": "easy",
+            "description": "Protocol research doc"
+        },
+        {
+            "question": "How does SonarQube scanning work with Maven and Gradle?",
+            "relevant_files": ["02_scanning_methods_research.md", "01_sonarqube_api_research.md"],
+            "relevant_keywords": ["Maven", "Gradle", "scanner", "SonarQube"],
+            "difficulty": "easy",
+            "description": "Direct SonarQube scanning topic"
+        },
+        {
+            "question": "What Java rules can be automatically fixed?",
+            "relevant_files": ["04_java_rules_catalog.md", "03_automated_fixing_research.md"],
+            "relevant_keywords": ["rules", "auto-fix", "S3776", "cognitive complexity"],
+            "difficulty": "easy",
+            "description": "Java rules catalog"
+        },
+        {
+            "question": "How does the tree-sitter parser handle edge cases in Java?",
+            "relevant_files": ["tree_sitter_edge_cases.md"],
+            "relevant_keywords": ["tree-sitter", "edge case", "Java"],
+            "difficulty": "easy",
+            "description": "Direct file match"
+        },
+        {
+            "question": "What is the architecture for generating JUnit tests?",
+            "relevant_files": ["AGENTIC_ARCHITECTURE.md", "ARCHITECTURE.md"],
+            "relevant_keywords": ["JUnit", "test generation", "architecture"],
+            "difficulty": "medium",
+            "description": "Architecture docs for test generation"
+        },
+        {
+            "question": "How are imports resolved when Cody generates incorrect package paths?",
+            "relevant_files": ["import_resolution.md"],
+            "relevant_keywords": ["import", "resolve", "package", "FQN"],
+            "difficulty": "medium",
+            "description": "Import resolution strategy doc"
+        },
+        {
+            "question": "What Spring patterns does the test generator support?",
+            "relevant_files": ["spring_patterns.md", "ARCHITECT_DESIGN.md"],
+            "relevant_keywords": ["Spring", "mock", "Repository", "Service"],
+            "difficulty": "medium",
+            "description": "Spring testing patterns"
+        },
+        {
+            "question": "How does the SonarQube auto-fixer apply code changes?",
+            "relevant_files": ["10_fix_application_strategy.md", "09_cody_edit_integration.md"],
+            "relevant_keywords": ["fix", "edit", "Cody", "diff"],
+            "difficulty": "medium",
+            "description": "Fix application strategy across files"
+        },
+        {
+            "question": "What are the reliability concerns with the agentic tool?",
+            "relevant_files": ["RELIABILITY_ASSESSMENT.md", "AUDIT_FINDINGS.md"],
+            "relevant_keywords": ["reliability", "failure", "retry"],
+            "difficulty": "medium",
+            "description": "Reliability and audit findings"
+        },
+        {
+            "question": "How does the PR integration work for SonarQube analysis?",
+            "relevant_files": ["06_pr_integration_research.md"],
+            "relevant_keywords": ["PR", "pull request", "GitHub", "new code"],
+            "difficulty": "easy",
+            "description": "PR integration research"
+        },
+        {
+            "question": "What Python clients exist for the SonarQube API?",
+            "relevant_files": ["05_python_clients_research.md", "01_sonarqube_api_research.md"],
+            "relevant_keywords": ["Python", "client", "API", "SonarQube"],
+            "difficulty": "easy",
+            "description": "Python client research"
+        },
+        {
+            "question": "How should prompts be engineered for code generation tasks?",
+            "relevant_files": ["PROMPT_ENGINEERING_RESEARCH.md"],
+            "relevant_keywords": ["prompt", "engineering", "few-shot", "chain-of-thought"],
+            "difficulty": "medium",
+            "description": "Prompt engineering research"
+        },
+        {
+            "question": "What is the performance architecture for handling large projects?",
+            "relevant_files": ["PERF_ARCHITECTURE.md", "PERFORMANCE_ANALYSIS.md"],
+            "relevant_keywords": ["performance", "parallel", "async", "scaling"],
+            "difficulty": "medium",
+            "description": "Performance optimization docs"
+        },
+        {
+            "question": "What edge cases exist in the test plan for the agentic tool?",
+            "relevant_files": ["EDGE_CASE_TEST_PLAN.md", "TEST_PLAN.md"],
+            "relevant_keywords": ["edge case", "test", "boundary"],
+            "difficulty": "medium",
+            "description": "Test planning docs"
+        },
+        {
+            "question": "How does the doc QA tool architecture handle hybrid search?",
+            "relevant_files": ["DOC_QA_ARCHITECTURE.md"],
+            "relevant_keywords": ["hybrid", "BM25", "vector", "RRF", "search"],
+            "difficulty": "medium",
+            "description": "This tool's own architecture doc"
+        },
+        {
+            "question": "What copyright header format should be used?",
+            "relevant_files": ["COPYRIGHT_HEADER_GUIDE.md"],
+            "relevant_keywords": ["copyright", "header", "license"],
+            "difficulty": "easy",
+            "description": "Copyright guide"
+        },
+        {
+            "question": "What are the main audit findings and critical issues?",
+            "relevant_files": ["AUDIT_FINDINGS.md"],
+            "relevant_keywords": ["audit", "critical", "bug", "issue"],
+            "difficulty": "medium",
+            "description": "Audit findings — exists in multiple dirs"
+        },
+        {
+            "question": "How does the Cody agent handle authentication and access tokens?",
+            "relevant_files": ["CODY_AGENT_RESEARCH.md", "JSONRPC_PROTOCOL_RESEARCH.md"],
+            "relevant_keywords": ["authentication", "access token", "SRC_ACCESS_TOKEN"],
+            "difficulty": "medium",
+            "description": "Cody auth across research docs"
+        },
+        {
+            "question": "What is the recommended architecture pattern for the SonarQube fixer?",
+            "relevant_files": ["07_architecture_patterns_research.md", "08_implementation_proposal.md", "ARCHITECTURE.md"],
+            "relevant_keywords": ["architecture", "pattern", "component", "flow"],
+            "difficulty": "hard",
+            "description": "Cross-file architecture understanding"
+        },
+        {
+            "question": "How does the system handle retries when test compilation fails?",
+            "relevant_files": ["IMPLEMENTATION_SUMMARY.md", "RELIABILITY_ASSESSMENT.md", "AGENTIC_ARCHITECTURE.md"],
+            "relevant_keywords": ["retry", "compile", "failure", "rollback"],
+            "difficulty": "hard",
+            "description": "Retry mechanism across multiple docs"
+        },
+        {
+            "question": "What is the implementation proposal for automatically fixing SonarQube issues?",
+            "relevant_files": ["08_implementation_proposal.md", "03_automated_fixing_research.md"],
+            "relevant_keywords": ["implementation", "proposal", "auto-fix"],
+            "difficulty": "medium",
+            "description": "Implementation proposal"
+        },
+        {
+            "question": "How does Cody edit code using the editCommands protocol?",
+            "relevant_files": ["09_cody_edit_integration.md", "10_fix_application_strategy.md"],
+            "relevant_keywords": ["editCommands", "edit", "code", "protocol"],
+            "difficulty": "hard",
+            "description": "Edit protocol across two research docs"
+        },
+        {
+            "question": "What tools and capabilities does Claude Code have for code editing?",
+            "relevant_files": ["AGENTIC_AI_CODING_TOOLS_RESEARCH.md"],
+            "relevant_keywords": ["Claude Code", "tools", "Bash", "Edit", "Write"],
+            "difficulty": "easy",
+            "description": "Claude Code tool capabilities"
+        },
+        {
+            "question": "How does the system detect and handle changed files in a git branch?",
+            "relevant_files": ["IMPLEMENTATION_SUMMARY.md", "REQUIREMENTS.md", "AGENTIC_ARCHITECTURE.md"],
+            "relevant_keywords": ["git", "branch", "changed", "diff"],
+            "difficulty": "hard",
+            "description": "Git integration across docs"
+        }
+    ]
+}
