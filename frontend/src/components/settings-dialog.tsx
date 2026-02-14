@@ -354,7 +354,7 @@ function RetrievalTab({ settings }: { settings: UseSettingsReturn }) {
 function LLMTab({ settings }: { settings: UseSettingsReturn }) {
   const { config, updateSection, saving, restartRequired } = settings;
   const [llm, setLlm] = useState({ primary: "cody", fallback: "ollama" });
-  const [cody, setCody] = useState({ model: "", endpoint: "", access_token_env: "SRC_ACCESS_TOKEN" });
+  const [cody, setCody] = useState({ model: "", endpoint: "", access_token_env: "SRC_ACCESS_TOKEN", _token_is_set: false });
   const [ollama, setOllama] = useState({ host: "", model: "" });
   const [saved, setSaved] = useState(false);
 
@@ -372,6 +372,7 @@ function LLMTab({ settings }: { settings: UseSettingsReturn }) {
       model: field(config, "cody", "model", ""),
       endpoint: field(config, "cody", "endpoint", ""),
       access_token_env: field(config, "cody", "access_token_env", "SRC_ACCESS_TOKEN"),
+      _token_is_set: field(config, "cody", "_token_is_set", false),
     });
     setOllama({
       host: field(config, "ollama", "host", ""),
@@ -466,6 +467,15 @@ function LLMTab({ settings }: { settings: UseSettingsReturn }) {
           <Input id="cody-token-env" value={cody.access_token_env} placeholder="SRC_ACCESS_TOKEN" onChange={(e) => setCody((f) => ({ ...f, access_token_env: e.target.value }))} />
           <p className="text-muted-foreground text-[11px]">
             Environment variable containing your Sourcegraph token
+            {cody._token_is_set ? (
+              <span className="ml-1.5 inline-flex items-center gap-0.5 text-green-600 dark:text-green-400">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" /> Set
+              </span>
+            ) : (
+              <span className="ml-1.5 inline-flex items-center gap-0.5 text-red-500 dark:text-red-400">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-red-500" /> Not set
+              </span>
+            )}
           </p>
         </div>
 

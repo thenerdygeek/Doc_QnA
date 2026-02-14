@@ -48,7 +48,7 @@ class RetrievalConfig:
 @dataclass
 class CodyConfig:
     access_token_env: str = "SRC_ACCESS_TOKEN"
-    endpoint: str = "https://sourcegraph.com"
+    endpoint: str = ""
     agent_binary: str | None = None
     model: str = "anthropic::2025-01-01::claude-3.5-sonnet"
 
@@ -161,6 +161,16 @@ def resolve_db_path(config: AppConfig, repo_path: str) -> str:
     if not Path(db_path).is_absolute():
         db_path = str(Path(repo_path) / db_path)
     return db_path
+
+
+def resolve_cody_endpoint(config: AppConfig) -> str:
+    """Resolve Cody endpoint: config → SRC_ENDPOINT env var → default."""
+    import os
+    return (
+        config.cody.endpoint
+        or os.environ.get("SRC_ENDPOINT", "")
+        or "https://sourcegraph.com"
+    )
 
 
 def load_config(config_path: Path | None = None) -> AppConfig:

@@ -25,6 +25,7 @@ from doc_qa.config import (
     _apply_dict,
     config_to_dict,
     load_config,
+    resolve_cody_endpoint,
     resolve_db_path,
     save_config,
 )
@@ -316,7 +317,7 @@ def create_app(
             llm_backend = create_backend(
                 primary=cfg.llm.primary,
                 fallback=cfg.llm.fallback,
-                cody_endpoint=cfg.cody.endpoint,
+                cody_endpoint=resolve_cody_endpoint(cfg),
                 cody_model=cfg.cody.model,
                 cody_binary=cfg.cody.agent_binary,
                 workspace_root=repo_path,
@@ -704,8 +705,18 @@ def create_app(
 
     @app.get("/api/config")
     async def get_config() -> dict:
-        """Return current configuration (secrets redacted)."""
-        return config_to_dict(app.state.config)
+        """Return current configuration with resolved env vars."""
+        cfg = app.state.config
+        data = config_to_dict(cfg)
+
+        # Resolve Cody env vars so the Settings UI shows actual values
+        if "cody" in data:
+            token_env = cfg.cody.access_token_env or "SRC_ACCESS_TOKEN"
+            data["cody"]["_token_is_set"] = bool(os.environ.get(token_env, ""))
+            # Always show the resolved endpoint (config → SRC_ENDPOINT → default)
+            data["cody"]["endpoint"] = resolve_cody_endpoint(cfg)
+
+        return data
 
     @app.patch("/api/config")
     async def update_config(request: Request) -> dict:
@@ -856,8 +867,9 @@ def create_app(
     async def test_cody_connection(request: Request) -> dict:
         """Test Cody connection: spawn agent, authenticate, list models."""
         body = await request.json()
-        endpoint = body.get("endpoint", "https://sourcegraph.com")
-        access_token_env = body.get("access_token_env", "SRC_ACCESS_TOKEN")
+        cfg = app.state.config
+        endpoint = body.get("endpoint") or resolve_cody_endpoint(cfg)
+        access_token_env = body.get("access_token_env") or cfg.cody.access_token_env or "SRC_ACCESS_TOKEN"
 
         # Read token from the specified env var
         token = os.environ.get(access_token_env, "")
