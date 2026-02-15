@@ -123,6 +123,27 @@ export function useIndexing(): UseIndexingReturn {
         signal: controller.signal,
       }).catch((err) => {
         if (controller.signal.aborted) return;
+
+        // 409 = indexing already running (e.g., after laptop sleep broke the SSE).
+        // Automatically reconnect to the existing job instead of showing an error.
+        const is409 =
+          err instanceof Error && (err.message.includes("409") || err.message.includes("already running"));
+        if (is409) {
+          streamIndex({
+            onEvent: handleEvent,
+            signal: controller.signal,
+          }).catch((reconnectErr) => {
+            if (controller.signal.aborted) return;
+            setState((prev) => ({
+              ...prev,
+              phase: "error",
+              state: "error",
+              error: "Indexing is in progress but could not reconnect. Restart the server to reset.",
+            }));
+          });
+          return;
+        }
+
         setState((prev) => ({
           ...prev,
           phase: "error",

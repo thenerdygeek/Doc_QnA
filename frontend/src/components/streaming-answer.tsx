@@ -75,7 +75,7 @@ export function StreamingAnswer({
   // Skeleton shimmer while waiting for first token
   if (!content && isStreaming) {
     return (
-      <div className="space-y-2.5 py-1" aria-label="Loading response">
+      <div className="space-y-2.5 py-1" aria-label="Loading response" aria-busy="true" role="status">
         <div className="skeleton-shimmer h-3.5 w-[85%]" />
         <div className="skeleton-shimmer h-3.5 w-[70%]" />
         <div className="skeleton-shimmer h-3.5 w-[60%]" />

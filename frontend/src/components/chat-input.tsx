@@ -65,7 +65,6 @@ export function ChatInput({
       <form
         onSubmit={handleSubmit}
         className="mx-auto flex max-w-3xl items-end gap-2 px-3 py-2 sm:gap-3 sm:px-4 sm:py-3"
-        role="search"
         aria-label="Ask a question"
       >
         <div className="input-focus-ring relative flex flex-1 items-end rounded-xl border border-input bg-background shadow-sm transition-all focus-within:border-primary/50">

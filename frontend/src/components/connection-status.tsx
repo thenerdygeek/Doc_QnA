@@ -58,7 +58,7 @@ export function ConnectionStatus() {
     ? "bg-emerald-500"
     : isDegraded
       ? "bg-amber-500"
-      : "bg-destructive";
+      : "bg-amber-600";
 
   const pingColor = isOk
     ? "bg-emerald-400"
@@ -70,17 +70,17 @@ export function ConnectionStatus() {
     ? "text-muted-foreground"
     : isDegraded
       ? "text-amber-600 dark:text-amber-400"
-      : "text-destructive";
+      : "text-amber-700 dark:text-amber-400";
 
-  const label = isOk ? "Connected" : isDegraded ? "Degraded" : "Offline";
+  // Soften "Offline" → "Not connected" (less alarming for initial setup)
+  const label = isOk ? "Connected" : isDegraded ? "Degraded" : "Not connected";
 
   const tooltipText = status === "disconnected"
-    ? "Backend: Offline"
-    : `Backend: Connected | Index: ${
-        details && details.indexChunks > 0
-          ? `${details.indexChunks.toLocaleString()} chunks`
-          : "Empty"
-      }`;
+    ? "Backend: Not connected — start the server to begin"
+    : `Backend: Connected | Index: ${details && details.indexChunks > 0
+      ? `${details.indexChunks.toLocaleString()} chunks`
+      : "Empty"
+    }`;
 
   return (
     <div
@@ -89,6 +89,9 @@ export function ConnectionStatus() {
       aria-label={`Backend ${status}`}
       onMouseEnter={() => setShowTooltip(true)}
       onMouseLeave={() => setShowTooltip(false)}
+      onFocus={() => setShowTooltip(true)}
+      onBlur={() => setShowTooltip(false)}
+      tabIndex={0}
     >
       <span className="relative flex h-2 w-2">
         {(isOk || isDegraded) && (

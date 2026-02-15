@@ -138,6 +138,27 @@ _model_name: str = ""
 _model_lock = threading.Lock()
 
 
+def _has_local_model(cache_dir: str, model_name: str) -> bool:
+    """Check if the model files already exist locally (GCS or HF layout)."""
+    info = _MODEL_GCS_INFO.get(model_name)
+    if not info:
+        return False
+
+    # Check GCS layout: fast-all-MiniLM-L6-v2/model.onnx
+    gcs_onnx = Path(cache_dir) / info["dir_name"] / "model.onnx"
+    if gcs_onnx.is_file() and gcs_onnx.stat().st_size > 10_000_000:
+        return True
+
+    # Check HF layout: models--qdrant--.../**/model.onnx
+    hf_dir = Path(cache_dir) / info["hf_dir_name"]
+    if hf_dir.exists():
+        for f in hf_dir.rglob("model.onnx"):
+            if f.stat().st_size > 10_000_000:
+                return True
+
+    return False
+
+
 def _get_model(model_name: str = "sentence-transformers/all-MiniLM-L6-v2") -> object:
     """Get or create the FastEmbed TextEmbedding model (lazy singleton)."""
     global _model, _model_name
@@ -152,6 +173,12 @@ def _get_model(model_name: str = "sentence-transformers/all-MiniLM-L6-v2") -> ob
 
         # Clean up any corrupt HF cache before loading
         _cleanup_corrupt_hf_cache(cache_dir, model_name)
+
+        # If model files exist locally, block HF from downloading again.
+        # This prevents fastembed from ignoring the GCS layout and
+        # starting a slow HuggingFace download.
+        if _has_local_model(cache_dir, model_name):
+            os.environ["HF_HUB_OFFLINE"] = "1"
 
         from fastembed import TextEmbedding
 

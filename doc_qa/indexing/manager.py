@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 from doc_qa.config import AppConfig
 from doc_qa.indexing.job import IndexingJob, IndexingState, OnSwapCallback
 
 logger = logging.getLogger(__name__)
+
+# If an indexing job hasn't emitted any event for this long (seconds),
+# consider it stale.  Laptop sleep / network interruption can cause
+# the asyncio task to survive but stop making real progress.
+_STALE_JOB_TIMEOUT = 300  # 5 minutes
 
 
 class IndexingManager:
@@ -31,7 +37,30 @@ class IndexingManager:
 
     @property
     def is_running(self) -> bool:
-        return self._job is not None and self._job.is_running
+        """True only if the job state is non-terminal AND the asyncio task is alive."""
+        if self._job is None:
+            return False
+        if not self._job.is_running:
+            return False
+        # If the asyncio Task finished (crash, cancellation) but the job
+        # state was never updated, treat it as not running.
+        if self._task is not None and self._task.done():
+            logger.warning("Indexing task finished but job state is '%s' — cleaning up", self._job.state.value)
+            self._job._state = IndexingState.error
+            self._job.error_message = "Indexing task stopped unexpectedly"
+            return False
+        return True
+
+    def _is_stale(self) -> bool:
+        """Check if the current job appears stale (no progress for a while)."""
+        if self._job is None or not self._job.is_running:
+            return False
+        # Check the timestamp of the last emitted event
+        if self._job._event_buffer:
+            last_event_time = self._job._event_buffer[-1].timestamp
+            if time.time() - last_event_time > _STALE_JOB_TIMEOUT:
+                return True
+        return False
 
     # ── Start / Cancel ────────────────────────────────────────
 
@@ -45,7 +74,14 @@ class IndexingManager:
         """Launch a new indexing job. Raises if one is already running."""
         async with self._lock:
             if self.is_running:
-                raise RuntimeError("An indexing job is already running")
+                if self._is_stale():
+                    logger.warning(
+                        "Previous indexing job is stale (no progress for %ds) — cancelling it",
+                        _STALE_JOB_TIMEOUT,
+                    )
+                    self._force_cleanup()
+                else:
+                    raise RuntimeError("An indexing job is already running")
 
             job = IndexingJob(repo_path=repo_path, config=config, db_path=db_path)
             self._job = job
@@ -58,6 +94,17 @@ class IndexingManager:
         if self._job is None or not self._job.is_running:
             raise RuntimeError("No indexing job is running")
         self._job.cancel()
+
+    def _force_cleanup(self) -> None:
+        """Force-cancel a stale or dead job so a new one can start."""
+        if self._task is not None and not self._task.done():
+            self._task.cancel()
+        if self._job is not None:
+            self._job._state = IndexingState.error
+            self._job.error_message = "Replaced by new indexing request"
+            self._job._emit_sentinel()
+        self._job = None
+        self._task = None
 
     # ── Status ────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { BookOpen, Code, Database, GitCompare, List } from "lucide-react";
+import { BookOpen, Code, Database, GitCompare, List, FolderOpen } from "lucide-react";
 import { api } from "@/api/client";
 import type { StatsResponse } from "@/types/api";
 
@@ -27,7 +27,7 @@ const EXAMPLE_QUESTIONS = [
   },
 ];
 
-// ── Typewriter subtitle ────────────────────────────────────────
+// ── CSS-only typewriter subtitle ──────────────────────────────
 
 const SUBTITLE_TEXT = "Ask anything about your documentation";
 
@@ -36,19 +36,14 @@ function TypewriterText({ text }: { text: string }) {
   if (prefersReduced) {
     return <span>{text}</span>;
   }
+  // CSS-based typing animation — one element instead of per-character motion.span
   return (
-    <>
-      {text.split("").map((char, i) => (
-        <motion.span
-          key={i}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.6 + i * 0.025, duration: 0.1 }}
-        >
-          {char}
-        </motion.span>
-      ))}
-    </>
+    <span
+      className="typewriter-text"
+      style={{ "--char-count": text.length } as React.CSSProperties}
+    >
+      {text}
+    </span>
   );
 }
 
@@ -124,21 +119,37 @@ function GlowCard({
   );
 }
 
+// Simple app-level cache for stats to avoid re-fetching on every mount
+let _cachedStats: StatsResponse | null = null;
+let _statsPromise: Promise<StatsResponse> | null = null;
+
+function fetchStatsCached(): Promise<StatsResponse> {
+  if (_cachedStats) return Promise.resolve(_cachedStats);
+  if (!_statsPromise) {
+    _statsPromise = api.stats().then((data) => {
+      _cachedStats = data;
+      return data;
+    });
+  }
+  return _statsPromise;
+}
+
 export function WelcomeScreen({ onSelectQuestion }: WelcomeScreenProps) {
-  const [stats, setStats] = useState<StatsResponse | null>(null);
+  const [stats, setStats] = useState<StatsResponse | null>(_cachedStats);
 
   useEffect(() => {
     let mounted = true;
-    api
-      .stats()
+    fetchStatsCached()
       .then((data) => {
         if (mounted) setStats(data);
       })
-      .catch(() => {});
+      .catch(() => { });
     return () => {
       mounted = false;
     };
   }, []);
+
+  const hasFiles = stats && stats.total_files > 0;
 
   return (
     <div className="relative flex flex-1 flex-col items-center justify-center overflow-hidden px-3 sm:px-4">
@@ -162,7 +173,7 @@ export function WelcomeScreen({ onSelectQuestion }: WelcomeScreenProps) {
           <p className="mx-auto max-w-md text-sm leading-relaxed text-muted-foreground">
             <TypewriterText text={SUBTITLE_TEXT} />
           </p>
-          {stats && (
+          {stats && hasFiles && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -175,6 +186,23 @@ export function WelcomeScreen({ onSelectQuestion }: WelcomeScreenProps) {
               </span>
               <span className="h-3 w-px bg-border" aria-hidden="true" />
               <span>{stats.total_chunks.toLocaleString()} chunks</span>
+            </motion.div>
+          )}
+          {/* Empty state CTA when no docs are indexed */}
+          {stats && !hasFiles && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.4, duration: 0.4 }}
+              className="mx-auto flex max-w-sm flex-col items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 dark:bg-amber-500/10"
+            >
+              <span className="flex items-center gap-1.5 text-sm font-medium text-amber-700 dark:text-amber-300">
+                <FolderOpen className="h-4 w-4" />
+                No documentation indexed
+              </span>
+              <p className="text-xs text-muted-foreground">
+                Open <strong>Settings → Index</strong> tab and point to a documentation folder to get started.
+              </p>
             </motion.div>
           )}
         </motion.div>

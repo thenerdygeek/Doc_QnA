@@ -467,7 +467,11 @@ def cmd_install_model(args: argparse.Namespace) -> None:
                 print(f"  {f.name}", file=sys.stderr)
         sys.exit(1)
 
-    # 5. Load into fastembed and verify
+    # 5. Force offline mode — model is local, don't let fastembed download
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
+    # 6. Load into fastembed and verify
     print("  Loading model into fastembed...")
     try:
         _get_model(model_name)

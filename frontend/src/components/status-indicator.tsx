@@ -24,7 +24,7 @@ export function StatusIndicator({ status }: StatusIndicatorProps) {
       initial={{ opacity: 0, y: -4 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
-      className="flex items-center gap-1 py-1"
+      className="flex items-center gap-1 overflow-x-auto py-1"
       role="status"
       aria-live="polite"
       aria-label={PIPELINE_STEPS[activeIdx]?.label ?? status}
@@ -60,15 +60,14 @@ export function StatusIndicator({ status }: StatusIndicatorProps) {
                   <div className="h-1.5 w-1.5 rounded-full bg-muted-foreground/30" />
                 </div>
               )}
-              {/* Label below dot */}
+              {/* Label below dot — hidden on very narrow screens, shows only active */}
               <span
-                className={`mt-0.5 text-[9px] font-medium leading-none ${
-                  isActive
+                className={`mt-0.5 text-[9px] font-medium leading-none whitespace-nowrap ${isActive
                     ? "text-primary"
                     : isComplete
                       ? "text-emerald-600 dark:text-emerald-400"
-                      : "text-muted-foreground/40"
-                }`}
+                      : "text-muted-foreground/40 hidden @[360px]:inline"
+                  }`}
               >
                 {step.short}
               </span>
@@ -76,9 +75,8 @@ export function StatusIndicator({ status }: StatusIndicatorProps) {
             {/* Connector line */}
             {i < PIPELINE_STEPS.length - 1 && (
               <div
-                className={`mb-3 h-px w-3 sm:w-5 ${
-                  isFuture ? "bg-muted-foreground/15" : "bg-primary/30"
-                }`}
+                className={`mb-3 h-px w-3 shrink-0 sm:w-5 ${isFuture ? "bg-muted-foreground/15" : "bg-primary/30"
+                  }`}
               />
             )}
           </div>

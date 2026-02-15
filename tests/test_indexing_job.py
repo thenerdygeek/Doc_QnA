@@ -16,6 +16,7 @@ from doc_qa.indexing.job import (
     IndexingState,
     SwapResult,
     _cleanup_temp,
+    _parse_and_chunk,
     _process_file,
 )
 from doc_qa.indexing.manager import IndexingManager
@@ -140,9 +141,20 @@ class TestIndexingJob:
         mock_swap_result = SwapResult(index=MagicMock(), retriever=MagicMock())
         on_swap = AsyncMock()
 
+        # _parse_and_chunk returns chunks list (not count) — mock with 3 mock chunks per file
+        mock_chunk = MagicMock()
+        mock_chunk.file_path = str(mock_files[0])
+        mock_parse_result = {
+            "chunks": [mock_chunk, mock_chunk, mock_chunk],
+            "sections": 2,
+            "skipped": False,
+            "file_hash": "abc123",
+        }
+
         with (
             patch("doc_qa.indexing.job.scan_files", return_value=mock_files),
-            patch("doc_qa.indexing.job._process_file", return_value={"chunks": 3, "sections": 2, "skipped": False}),
+            patch("doc_qa.indexing.job._parse_and_chunk", return_value=mock_parse_result),
+            patch("doc_qa.indexing.job._bulk_add_chunks", return_value=3),
             patch("doc_qa.indexing.job.DocIndex") as MockIndex,
             patch("doc_qa.indexing.job._atomic_swap", return_value=mock_swap_result),
             patch("doc_qa.indexing.job._cleanup_temp"),
@@ -193,18 +205,21 @@ class TestIndexingJob:
         mock_files = [repo / "intro.md", repo / "guide.md"]
 
         call_count = 0
+        mock_chunk = MagicMock()
+        mock_chunk.file_path = str(mock_files[0])
 
-        def _process_side_effect(*args, **kwargs):
+        def _parse_side_effect(*args, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count >= 1:
                 # Cancel after first file
                 job.cancel()
-            return {"chunks": 2, "sections": 1, "skipped": False}
+            return {"chunks": [mock_chunk, mock_chunk], "sections": 1, "skipped": False, "file_hash": "abc"}
 
         with (
             patch("doc_qa.indexing.job.scan_files", return_value=mock_files),
-            patch("doc_qa.indexing.job._process_file", side_effect=_process_side_effect),
+            patch("doc_qa.indexing.job._parse_and_chunk", side_effect=_parse_side_effect),
+            patch("doc_qa.indexing.job._bulk_add_chunks", return_value=2),
             patch("doc_qa.indexing.job.DocIndex") as MockIndex,
             patch("doc_qa.indexing.job._cleanup_temp") as mock_cleanup,
         ):
@@ -317,7 +332,8 @@ class TestIndexingJob:
 
         with (
             patch("doc_qa.indexing.job.scan_files", return_value=[repo / "intro.md"]),
-            patch("doc_qa.indexing.job._process_file", return_value={"chunks": 1, "sections": 1, "skipped": False}),
+            patch("doc_qa.indexing.job._parse_and_chunk", return_value={"chunks": [MagicMock()], "sections": 1, "skipped": False, "file_hash": "abc"}),
+            patch("doc_qa.indexing.job._bulk_add_chunks", return_value=1),
             patch("doc_qa.indexing.job.DocIndex") as MockIndex,
             patch("doc_qa.indexing.job._atomic_swap", return_value=mock_swap_result),
             patch("doc_qa.indexing.job._cleanup_temp"),

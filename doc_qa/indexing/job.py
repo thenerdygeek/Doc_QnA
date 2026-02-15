@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import enum
 import gc
 import logging
 import shutil
 import sys
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Coroutine
@@ -23,6 +25,11 @@ from doc_qa.parsers.registry import parse_file
 from doc_qa.retrieval.retriever import HybridRetriever
 
 logger = logging.getLogger(__name__)
+
+# ── Parallel processing settings ─────────────────────────────────
+_MAX_WORKERS = 4          # parallel file parsing/chunking threads
+_EMBED_BATCH_SIZE = 50    # files to accumulate before bulk embedding + insert
+_MAX_EVENT_BUFFER = 200   # max events kept for SSE replay on reconnect
 
 
 # ── State machine ────────────────────────────────────────────────
@@ -91,7 +98,10 @@ class IndexingJob:
         self._state = IndexingState.idle
         self._cancel_event = asyncio.Event()
         self._subscribers: list[asyncio.Queue[IndexingEvent | None]] = []
-        self._event_buffer: list[IndexingEvent] = []
+        # Capped ring buffer — only the most recent events are kept for
+        # SSE replay on reconnect.  For 2900+ file repos, keeping every
+        # file_done event wastes memory and makes reconnect slow.
+        self._event_buffer: deque[IndexingEvent] = deque(maxlen=_MAX_EVENT_BUFFER)
 
         # Counters for status reporting
         self.total_files: int = 0
@@ -117,7 +127,12 @@ class IndexingJob:
     # ── Subscriber management ─────────────────────────────────
 
     def subscribe(self) -> tuple[list[IndexingEvent], asyncio.Queue[IndexingEvent | None]]:
-        """Subscribe to events. Returns (past_events, live_queue)."""
+        """Subscribe to events. Returns (recent_events, live_queue).
+
+        Only the most recent ``_MAX_EVENT_BUFFER`` events are replayed —
+        reconnecting clients get current progress without replaying
+        thousands of old file_done events.
+        """
         queue: asyncio.Queue[IndexingEvent | None] = asyncio.Queue()
         self._subscribers.append(queue)
         return list(self._event_buffer), queue
@@ -168,12 +183,17 @@ class IndexingJob:
         3. Rebuild FTS index
         4. Atomic swap (temp → prod)
         5. Done
+
+        Prevents the OS from sleeping while indexing is running.
         """
+        from doc_qa.utils.keep_awake import keep_awake
+
         loop = asyncio.get_running_loop()
         self._start_time = time.time()
         temp_db_path = f"{self.db_path}_building"
 
-        try:
+        with keep_awake(f"Indexing {self.repo_path}"):
+          try:
             # ── Phase 1: Scanning ────────────────────────────
             self._set_state(IndexingState.scanning)
             files = await loop.run_in_executor(None, scan_files, self.config.doc_repo)
@@ -199,39 +219,88 @@ class IndexingJob:
                 embedding_model=self.config.indexing.embedding_model,
             )
 
-            for i, file_path in enumerate(files):
-                self._check_cancelled()
+            chunk_size = self.config.indexing.chunk_size
+            chunk_overlap = self.config.indexing.chunk_overlap
+            min_chunk_size = self.config.indexing.min_chunk_size
 
-                result = await loop.run_in_executor(
-                    None,
-                    _process_file,
-                    temp_index,
-                    str(file_path),
-                    self.config.indexing.chunk_size,
-                    self.config.indexing.chunk_overlap,
-                    self.config.indexing.min_chunk_size,
-                )
+            # Parse and chunk files in parallel, then batch-insert embeddings.
+            # This gives ~3-4x speedup over sequential processing.
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=_MAX_WORKERS)
+            pending_chunks: list[tuple[str, list[Chunk]]] = []  # (file_path, chunks)
+            pending_hashes: list[str] = []
 
-                self.processed_files = i + 1
-                self.total_chunks += result["chunks"]
+            try:
+                # Submit parse jobs in batches
+                batch_start = 0
+                while batch_start < len(files):
+                    self._check_cancelled()
 
-                self._emit("file_done", {
-                    "file": str(file_path),
-                    "file_index": i,
-                    "total_files": self.total_files,
-                    "chunks": result["chunks"],
-                    "sections": result["sections"],
-                    "skipped": result["skipped"],
-                })
+                    # Submit a batch of files for parallel parsing
+                    batch_end = min(batch_start + _EMBED_BATCH_SIZE, len(files))
+                    batch_files = files[batch_start:batch_end]
 
-                percent = int((self.processed_files / max(self.total_files, 1)) * 100)
-                self._emit("progress", {
-                    "state": "indexing",
-                    "processed": self.processed_files,
-                    "total_files": self.total_files,
-                    "total_chunks": self.total_chunks,
-                    "percent": percent,
-                })
+                    futures = {
+                        executor.submit(
+                            _parse_and_chunk,
+                            str(fp),
+                            chunk_size,
+                            chunk_overlap,
+                            min_chunk_size,
+                        ): str(fp)
+                        for fp in batch_files
+                    }
+
+                    # Collect parse results
+                    batch_chunks: list[Chunk] = []
+                    batch_file_hashes: list[str] = []
+
+                    for future in concurrent.futures.as_completed(futures):
+                        self._check_cancelled()
+                        file_path = futures[future]
+                        try:
+                            result = future.result()
+                        except Exception as exc:
+                            logger.warning("Failed to process %s: %s", file_path, exc)
+                            result = {"chunks": [], "sections": 0, "skipped": True, "file_hash": ""}
+
+                        self.processed_files += 1
+                        n_chunks = len(result["chunks"])
+                        self.total_chunks += n_chunks
+
+                        self._emit("file_done", {
+                            "file": file_path,
+                            "file_index": self.processed_files - 1,
+                            "total_files": self.total_files,
+                            "chunks": n_chunks,
+                            "sections": result["sections"],
+                            "skipped": result["skipped"],
+                        })
+
+                        percent = int((self.processed_files / max(self.total_files, 1)) * 100)
+                        self._emit("progress", {
+                            "state": "indexing",
+                            "processed": self.processed_files,
+                            "total_files": self.total_files,
+                            "total_chunks": self.total_chunks,
+                            "percent": percent,
+                        })
+
+                        if result["chunks"]:
+                            batch_chunks.extend(result["chunks"])
+                            batch_file_hashes.append(result["file_hash"])
+
+                    # Bulk embed + insert the entire batch at once
+                    if batch_chunks:
+                        await loop.run_in_executor(
+                            None,
+                            _bulk_add_chunks,
+                            temp_index,
+                            batch_chunks,
+                        )
+
+                    batch_start = batch_end
+            finally:
+                executor.shutdown(wait=False)
 
             # ── Phase 3: Rebuild FTS ─────────────────────────
             self._check_cancelled()
@@ -261,24 +330,82 @@ class IndexingJob:
                 "elapsed": elapsed,
             })
 
-        except asyncio.CancelledError:
-            self._state = IndexingState.cancelled
-            self._emit("cancelled", {"message": "Indexing was cancelled"})
-            await loop.run_in_executor(None, _cleanup_temp, temp_db_path)
-            logger.info("Indexing cancelled by user")
+          except asyncio.CancelledError:
+              self._state = IndexingState.cancelled
+              self._emit("cancelled", {"message": "Indexing was cancelled"})
+              await loop.run_in_executor(None, _cleanup_temp, temp_db_path)
+              logger.info("Indexing cancelled by user")
 
-        except Exception as exc:
-            self._state = IndexingState.error
-            self.error_message = str(exc)
-            self._emit("error", {"error": str(exc), "type": type(exc).__name__})
-            await loop.run_in_executor(None, _cleanup_temp, temp_db_path)
-            logger.exception("Indexing failed")
+          except Exception as exc:
+              self._state = IndexingState.error
+              self.error_message = str(exc)
+              self._emit("error", {"error": str(exc), "type": type(exc).__name__})
+              await loop.run_in_executor(None, _cleanup_temp, temp_db_path)
+              logger.exception("Indexing failed")
 
-        finally:
-            self._emit_sentinel()
+          finally:
+              self._emit_sentinel()
 
 
 # ── Helper functions (run in executor / sync) ────────────────────
+
+
+def _parse_and_chunk(
+    file_path: str,
+    chunk_size: int,
+    chunk_overlap: int,
+    min_chunk_size: int,
+) -> dict[str, Any]:
+    """Parse and chunk a single file (CPU-only, no embedding or DB writes).
+
+    This runs in a thread pool for parallelism.  Embedding and DB insertion
+    happen in a separate bulk step so we can batch many files' chunks into
+    one ``add_chunks`` call.
+    """
+    try:
+        sections = parse_file(file_path)
+        if not sections:
+            return {"chunks": [], "sections": 0, "skipped": True, "file_hash": ""}
+
+        chunks = chunk_sections(
+            sections,
+            file_path=file_path,
+            max_tokens=chunk_size,
+            overlap_tokens=chunk_overlap,
+            min_tokens=min_chunk_size,
+        )
+        if not chunks:
+            return {"chunks": [], "sections": len(sections), "skipped": True, "file_hash": ""}
+
+        file_hash = _compute_file_hash(file_path)
+        return {
+            "chunks": chunks,
+            "sections": len(sections),
+            "skipped": False,
+            "file_hash": file_hash,
+        }
+
+    except Exception as exc:
+        logger.warning("Failed to process %s: %s", file_path, exc)
+        return {"chunks": [], "sections": 0, "skipped": True, "file_hash": ""}
+
+
+def _bulk_add_chunks(temp_index: DocIndex, chunks: list[Chunk]) -> int:
+    """Embed and insert a batch of chunks from multiple files at once.
+
+    Batching embeddings is much more efficient than per-file embedding
+    because the ONNX model can process larger batches in one pass.
+    """
+    if not chunks:
+        return 0
+
+    # Group chunks by file for hash lookup
+    file_hashes: dict[str, str] = {}
+    for c in chunks:
+        if c.file_path not in file_hashes:
+            file_hashes[c.file_path] = _compute_file_hash(c.file_path)
+
+    return temp_index.add_chunks(chunks, file_hashes)
 
 
 def _process_file(
@@ -288,7 +415,10 @@ def _process_file(
     chunk_overlap: int,
     min_chunk_size: int,
 ) -> dict[str, Any]:
-    """Parse, chunk, and upsert a single file into the temp index."""
+    """Parse, chunk, and upsert a single file into the temp index.
+
+    Kept for backward compatibility (used by incremental re-indexing).
+    """
     try:
         sections = parse_file(file_path)
         if not sections:

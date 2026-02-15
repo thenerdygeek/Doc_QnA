@@ -95,12 +95,22 @@ class DocIndex:
             logger.warning("Failed to create FTS index — hybrid search may be unavailable.", exc_info=True)
 
     def get_indexed_file_hashes(self) -> dict[str, str]:
-        """Return {file_path: file_hash} for all currently indexed files."""
+        """Return {file_path: file_hash} for all currently indexed files.
+
+        Only loads the two metadata columns — avoids materializing the
+        full table (text + vectors) which can be 100+ MB at scale.
+        """
         if self._table.count_rows() == 0:
             return {}
 
-        # Use PyArrow directly — no pandas dependency
-        arrow_table = self._table.to_arrow().select(["file_path", "file_hash"])
+        # Select only the columns we need BEFORE converting to Arrow.
+        # LanceDB supports column projection via to_arrow(columns=[...]).
+        try:
+            arrow_table = self._table.to_arrow(columns=["file_path", "file_hash"])
+        except TypeError:
+            # Older LanceDB versions may not support columns kwarg
+            arrow_table = self._table.to_arrow().select(["file_path", "file_hash"])
+
         result: dict[str, str] = {}
         for fp, fh in zip(
             arrow_table.column("file_path").to_pylist(),
@@ -158,12 +168,13 @@ class DocIndex:
             logger.info("Deleted %d chunks for %s.", deleted, file_path)
         return deleted
 
-    def add_chunks(self, chunks: list[Chunk], file_hash: str) -> int:
+    def add_chunks(self, chunks: list[Chunk], file_hash: str | dict[str, str]) -> int:
         """Embed and add chunks to the index.
 
         Args:
             chunks: List of Chunk objects to add.
-            file_hash: SHA-256 hash of the source file.
+            file_hash: Either a single SHA-256 hash (all chunks from one file)
+                or a dict of ``{file_path: hash}`` for multi-file batches.
 
         Returns:
             Number of chunks added.
@@ -171,27 +182,36 @@ class DocIndex:
         if not chunks:
             return 0
 
-        # Embed all chunk texts
+        # Embed all chunk texts in one batch (much faster than per-file)
         texts = [c.text for c in chunks]
         vectors = embed_texts(texts, model_name=self._embedding_model)
+
+        # Resolve hash per chunk
+        if isinstance(file_hash, str):
+            hash_lookup: dict[str, str] = {}  # single hash for all
+        else:
+            hash_lookup = file_hash
 
         # Build records
         records = []
         for chunk, vector in zip(chunks, vectors):
+            norm_path = _normalize_path(chunk.file_path)
+            h = hash_lookup.get(chunk.file_path, file_hash if isinstance(file_hash, str) else "")
             records.append({
                 "chunk_id": chunk.chunk_id,
                 "text": chunk.text,
                 "vector": vector.tolist(),
-                "file_path": _normalize_path(chunk.file_path),
+                "file_path": norm_path,
                 "file_type": chunk.file_type,
                 "section_title": chunk.section_title,
                 "section_level": chunk.section_level,
                 "chunk_index": chunk.chunk_index,
-                "file_hash": file_hash,
+                "file_hash": h,
             })
 
         self._table.add(records)
-        logger.info("Added %d chunks for %s.", len(records), chunks[0].file_path)
+        n_files = len(set(_normalize_path(c.file_path) for c in chunks))
+        logger.info("Added %d chunks from %d file(s).", len(records), n_files)
         return len(records)
 
     def upsert_file(self, chunks: list[Chunk], file_path: str) -> int:
@@ -211,12 +231,14 @@ class DocIndex:
         norm_path = _normalize_path(file_path)
 
         # Snapshot existing rows for this file so we can restore on failure.
+        # Use a filtered query instead of loading the entire table.
         backup_rows: list[dict] | None = None
         if self._table.count_rows() > 0:
             try:
-                at = self._table.to_arrow()
-                mask = pc.equal(at.column("file_path"), norm_path)
-                filtered = at.filter(mask)
+                safe_path = norm_path.replace("\\", "\\\\").replace('"', '\\"')
+                filtered = self._table.search().where(
+                    f'file_path = "{safe_path}"', prefilter=True
+                ).limit(10000).to_arrow()
                 if filtered.num_rows > 0:
                     backup_rows = filtered.to_pylist()
             except Exception:
@@ -261,7 +283,10 @@ class DocIndex:
         """Return number of unique files in the index."""
         if self._table.count_rows() == 0:
             return 0
-        col = self._table.to_arrow().select(["file_path"]).column("file_path")
+        try:
+            col = self._table.to_arrow(columns=["file_path"]).column("file_path")
+        except TypeError:
+            col = self._table.to_arrow().select(["file_path"]).column("file_path")
         return len(set(col.to_pylist()))
 
     def stats(self) -> dict[str, Any]:

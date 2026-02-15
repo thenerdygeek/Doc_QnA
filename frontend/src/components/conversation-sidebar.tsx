@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { MessageSquarePlus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -35,6 +36,54 @@ export function ConversationSidebar({
   open,
   onClose,
 }: ConversationSidebarProps) {
+  const sidebarRef = useRef<HTMLElement>(null);
+
+  // Focus trap for mobile overlay: keep Tab cycling within sidebar
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab" || !sidebarRef.current) return;
+
+      const focusable = sidebarRef.current.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusable.length === 0) return;
+
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    },
+    [onClose]
+  );
+
+  // Auto-focus sidebar when it opens on mobile
+  useEffect(() => {
+    if (open && sidebarRef.current) {
+      const firstButton = sidebarRef.current.querySelector<HTMLElement>("button");
+      firstButton?.focus();
+    }
+  }, [open]);
+
+  const handleDelete = useCallback(
+    (e: React.MouseEvent | React.KeyboardEvent, id: string) => {
+      e.stopPropagation();
+      if (window.confirm("Delete this conversation? This cannot be undone.")) {
+        onDelete(id);
+      }
+    },
+    [onDelete]
+  );
+
   return (
     <>
       {/* Mobile overlay backdrop */}
@@ -52,6 +101,8 @@ export function ConversationSidebar({
 
       {/* Sidebar panel */}
       <aside
+        ref={sidebarRef}
+        onKeyDown={open ? handleKeyDown : undefined}
         className={[
           "flex h-full w-[280px] shrink-0 flex-col border-r border-border/60 bg-card",
           // Mobile: slide-in overlay
@@ -128,25 +179,20 @@ export function ConversationSidebar({
                   <span className="text-xs text-muted-foreground">
                     {formatTimeAgo(conv.updated_at)}
                   </span>
-                  {/* Delete button (hover-only) */}
-                  <span
-                    role="button"
-                    tabIndex={0}
+                  {/* Delete button — native <button> for accessibility */}
+                  <button
+                    type="button"
                     aria-label="Delete conversation"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDelete(conv.id);
-                    }}
+                    onClick={(e) => handleDelete(e, conv.id)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
-                        e.stopPropagation();
-                        onDelete(conv.id);
+                        handleDelete(e, conv.id);
                       }
                     }}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100 focus:opacity-100"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
-                  </span>
+                  </button>
                 </motion.button>
               ))}
             </AnimatePresence>

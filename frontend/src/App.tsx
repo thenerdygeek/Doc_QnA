@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { Compass, Menu, MessageSquarePlus, Settings } from "lucide-react";
 import { ChatInput } from "@/components/chat-input";
@@ -84,9 +84,9 @@ export default function App() {
 
   const handleRetry = useCallback(
     (question: string) => {
-      setMessages((prev) => prev.slice(0, -1));
+      // Atomic update: remove last message and add new assistant in one call
       setMessages((prev) => [
-        ...prev,
+        ...prev.slice(0, -1),
         { id: nextId(), role: "assistant", content: "" },
       ]);
       stream.submit(question, sessionId);
@@ -179,6 +179,8 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-background">
+      {/* Skip-to-content link for keyboard users */}
+      <a href="#main-content" className="skip-to-content">Skip to content</a>
       {/* Conditional sidebar */}
       {showSidebar && (
         <ConversationSidebar
@@ -249,11 +251,13 @@ export default function App() {
           transition={{ duration: 0.4, delay: 0.1, ease: "easeOut" }}
           className="flex min-h-0 flex-1 flex-col"
         >
-          {isEmpty ? (
-            <WelcomeScreen onSelectQuestion={submitQuestion} />
-          ) : (
-            <MessageList messages={displayMessages} onRetry={handleRetry} />
-          )}
+          <div id="main-content">
+            {isEmpty ? (
+              <WelcomeScreen onSelectQuestion={submitQuestion} />
+            ) : (
+              <MessageList messages={displayMessages} onRetry={handleRetry} />
+            )}
+          </div>
         </motion.div>
         <motion.div
           initial={isFirstLoad.current && !prefersReduced ? { opacity: 0, y: 20 } : false}
@@ -267,23 +271,23 @@ export default function App() {
             isStreaming={stream.phase === "streaming"}
           />
         </motion.div>
-        {/* Bottom "Take a Tour" link for returning users */}
-        {!tour.active && (
-          <div className="flex justify-center border-t border-border/30 py-1.5">
+        {/* Consolidated footer — tour link + attribution in one row */}
+        <div className="flex items-center justify-between border-t border-border/20 px-4 py-1.5">
+          {!tour.active ? (
             <button
               type="button"
               onClick={() => {
                 tour.start();
                 settings.setOpen(true);
               }}
-              className="inline-flex items-center gap-1 text-[11px] text-muted-foreground/60 transition-colors hover:text-muted-foreground"
+              className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/50 transition-colors hover:text-muted-foreground"
             >
               <Compass className="h-3 w-3" />
               Take a Tour
             </button>
-          </div>
-        )}
-        <div className="flex justify-end border-t border-border/20 px-4 py-1">
+          ) : (
+            <span />
+          )}
           <span className="text-[10px] text-muted-foreground/40 transition-colors hover:text-muted-foreground/70">
             Made by Subhankar Halder
           </span>

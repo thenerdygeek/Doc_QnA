@@ -134,7 +134,8 @@ class TestStreamIndexing:
         mock_swap = SwapResult(index=MagicMock(), retriever=MagicMock())
         with (
             patch("doc_qa.indexing.job.scan_files", return_value=[docs_dir / "intro.md"]),
-            patch("doc_qa.indexing.job._process_file", return_value={"chunks": 3, "sections": 2, "skipped": False}),
+            patch("doc_qa.indexing.job._parse_and_chunk", return_value={"chunks": [MagicMock(), MagicMock(), MagicMock()], "sections": 2, "skipped": False, "file_hash": "abc"}),
+            patch("doc_qa.indexing.job._bulk_add_chunks", return_value=3),
             patch("doc_qa.indexing.job.DocIndex"),
             patch("doc_qa.indexing.job._atomic_swap", return_value=mock_swap),
             patch("doc_qa.indexing.job._cleanup_temp"),
