@@ -42,6 +42,28 @@ function stateLabel(state: string): string {
     return STATE_LABELS[state] ?? state;
 }
 
+/**
+ * Extract a short display path from a full file path.
+ *
+ * Shows up to the last `maxSegments` path segments, prefixed with "\u2026/"
+ * when truncated.  Handles both `/` (Unix) and `\` (Windows) separators.
+ */
+function shortenPath(fullPath: string, repoRoot: string, maxSegments = 3): string {
+    // Normalise separators to /
+    const norm = fullPath.replace(/\\/g, "/");
+    const normRoot = repoRoot.replace(/\\/g, "/").replace(/\/+$/, "");
+
+    // Strip the repo root prefix to get a relative path
+    let rel = norm;
+    if (normRoot && norm.startsWith(normRoot)) {
+        rel = norm.slice(normRoot.length).replace(/^\//, "");
+    }
+
+    const parts = rel.split("/").filter(Boolean);
+    if (parts.length <= maxSegments) return parts.join("/");
+    return "\u2026/" + parts.slice(-maxSegments).join("/");
+}
+
 // ── Folder browser dialog ──────────────────────────────────────
 
 function FolderBrowser({ open, onClose, onSelect }: { open: boolean; onClose: () => void; onSelect: (path: string) => void }) {
@@ -235,7 +257,7 @@ export function IndexingTab({ settings, indexing }: { settings: UseSettingsRetur
 
             {/* ── Progress section ──────────────────────────────────── */}
             {isRunning && (
-                <div className="min-w-0 space-y-3 overflow-hidden rounded-lg border border-blue-500/30 bg-blue-500/5 p-3 dark:bg-blue-500/10">
+                <div className="w-full min-w-0 space-y-3 overflow-hidden rounded-lg border border-blue-500/30 bg-blue-500/5 p-3 dark:bg-blue-500/10">
                     <div className="flex items-center justify-between">
                         <span className="flex items-center gap-1.5 text-sm font-medium text-blue-700 dark:text-blue-300">
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -263,15 +285,17 @@ export function IndexingTab({ settings, indexing }: { settings: UseSettingsRetur
 
                     {/* Recent files log */}
                     {indexing.recentFiles.length > 0 && (
-                        <ScrollArea className="h-24 rounded border border-border/50 bg-background/50 p-2">
-                            <div className="space-y-0.5">
+                        <ScrollArea className="h-24 overflow-x-hidden rounded border border-border/50 bg-background/50 p-2">
+                            <div className="space-y-0.5 overflow-hidden">
                                 {indexing.recentFiles.map((f, i) => (
                                     <div
                                         key={`${f.file}-${i}`}
-                                        className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground"
+                                        className="flex min-w-0 items-center gap-1.5 overflow-hidden text-[11px] text-muted-foreground"
                                     >
                                         <FileText className="h-3 w-3 shrink-0" />
-                                        <span className="min-w-0 truncate">{f.file.split("/").pop()}</span>
+                                        <span className="min-w-0 truncate" title={f.file}>
+                                            {shortenPath(f.file, indexing.repoPath)}
+                                        </span>
                                         {f.skipped ? (
                                             <span className="ml-auto shrink-0 text-yellow-600 dark:text-yellow-400">skipped</span>
                                         ) : (

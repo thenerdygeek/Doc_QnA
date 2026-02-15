@@ -132,7 +132,7 @@ export function useIndexing(): UseIndexingReturn {
           streamIndex({
             onEvent: handleEvent,
             signal: controller.signal,
-          }).catch((reconnectErr) => {
+          }).catch(() => {
             if (controller.signal.aborted) return;
             setState((prev) => ({
               ...prev,

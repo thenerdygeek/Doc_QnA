@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { Compass, Menu, MessageSquarePlus, Settings } from "lucide-react";
 import { ChatInput } from "@/components/chat-input";
