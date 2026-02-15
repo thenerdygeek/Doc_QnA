@@ -225,9 +225,12 @@ class IndexingJob:
 
             # Parse and chunk files in parallel, then batch-insert embeddings.
             # This gives ~3-4x speedup over sequential processing.
+            #
+            # IMPORTANT: We use asyncio.wrap_future + asyncio.wait instead of
+            # concurrent.futures.as_completed, because as_completed is a
+            # BLOCKING iterator that would freeze the asyncio event loop and
+            # prevent SSE events from being delivered to the frontend.
             executor = concurrent.futures.ThreadPoolExecutor(max_workers=_MAX_WORKERS)
-            pending_chunks: list[tuple[str, list[Chunk]]] = []  # (file_path, chunks)
-            pending_hashes: list[str] = []
 
             try:
                 # Submit parse jobs in batches
@@ -239,55 +242,64 @@ class IndexingJob:
                     batch_end = min(batch_start + _EMBED_BATCH_SIZE, len(files))
                     batch_files = files[batch_start:batch_end]
 
-                    futures = {
-                        executor.submit(
+                    # Submit to thread pool and wrap as asyncio futures
+                    # so we can await them without blocking the event loop.
+                    async_futures: dict[asyncio.Future, str] = {}
+                    for fp in batch_files:
+                        cf = executor.submit(
                             _parse_and_chunk,
                             str(fp),
                             chunk_size,
                             chunk_overlap,
                             min_chunk_size,
-                        ): str(fp)
-                        for fp in batch_files
-                    }
+                        )
+                        af = asyncio.wrap_future(cf, loop=loop)
+                        async_futures[af] = str(fp)
 
-                    # Collect parse results
+                    # Collect parse results as they complete (non-blocking)
                     batch_chunks: list[Chunk] = []
-                    batch_file_hashes: list[str] = []
+                    pending: set[asyncio.Future] = set(async_futures.keys())
 
-                    for future in concurrent.futures.as_completed(futures):
+                    while pending:
                         self._check_cancelled()
-                        file_path = futures[future]
-                        try:
-                            result = future.result()
-                        except Exception as exc:
-                            logger.warning("Failed to process %s: %s", file_path, exc)
-                            result = {"chunks": [], "sections": 0, "skipped": True, "file_hash": ""}
+                        # Wait for at least one future to complete — yields
+                        # control back to the event loop so SSE can flush.
+                        done, pending = await asyncio.wait(
+                            pending, return_when=asyncio.FIRST_COMPLETED,
+                        )
 
-                        self.processed_files += 1
-                        n_chunks = len(result["chunks"])
-                        self.total_chunks += n_chunks
+                        for async_fut in done:
+                            file_path = async_futures[async_fut]
+                            try:
+                                result = async_fut.result()
+                            except Exception as exc:
+                                logger.warning("Failed to process %s: %s", file_path, exc)
+                                result = {"chunks": [], "sections": 0, "skipped": True, "file_hash": ""}
 
-                        self._emit("file_done", {
-                            "file": file_path,
-                            "file_index": self.processed_files - 1,
-                            "total_files": self.total_files,
-                            "chunks": n_chunks,
-                            "sections": result["sections"],
-                            "skipped": result["skipped"],
-                        })
+                            self.processed_files += 1
+                            n_chunks = len(result["chunks"])
+                            self.total_chunks += n_chunks
 
-                        percent = int((self.processed_files / max(self.total_files, 1)) * 100)
-                        self._emit("progress", {
-                            "state": "indexing",
-                            "processed": self.processed_files,
-                            "total_files": self.total_files,
-                            "total_chunks": self.total_chunks,
-                            "percent": percent,
-                        })
+                            self._emit("file_done", {
+                                "file": file_path,
+                                "file_index": self.processed_files - 1,
+                                "total_files": self.total_files,
+                                "chunks": n_chunks,
+                                "sections": result["sections"],
+                                "skipped": result["skipped"],
+                            })
 
-                        if result["chunks"]:
-                            batch_chunks.extend(result["chunks"])
-                            batch_file_hashes.append(result["file_hash"])
+                            percent = int((self.processed_files / max(self.total_files, 1)) * 100)
+                            self._emit("progress", {
+                                "state": "indexing",
+                                "processed": self.processed_files,
+                                "total_files": self.total_files,
+                                "total_chunks": self.total_chunks,
+                                "percent": percent,
+                            })
+
+                            if result["chunks"]:
+                                batch_chunks.extend(result["chunks"])
 
                     # Bulk embed + insert the entire batch at once
                     if batch_chunks:
