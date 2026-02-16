@@ -595,7 +595,9 @@ class CodyBackend(LLMBackend):
                 # Notify agent about context files for better awareness
                 await self._notify_context_files(context_items)
 
-                prompt = self._build_prompt(question, context="", history=history)
+                # Include context directly in the prompt so the LLM always
+                # sees it, regardless of whether Cody injects contextFiles.
+                prompt = self._build_prompt(question, context=context, history=history)
                 request_data = self._build_request_data(chat_id, prompt, context_items)
 
                 try:
@@ -648,7 +650,9 @@ class CodyBackend(LLMBackend):
 
                 await self._notify_context_files(context_items)
 
-                prompt = self._build_prompt(question, context="", history=history)
+                # Include context directly in the prompt so the LLM always
+                # sees it, regardless of whether Cody injects contextFiles.
+                prompt = self._build_prompt(question, context=context, history=history)
                 request_data = self._build_request_data(chat_id, prompt, context_items)
 
                 try:
