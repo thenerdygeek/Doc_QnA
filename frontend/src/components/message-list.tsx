@@ -115,6 +115,7 @@ const MessageItem = memo(function MessageItem({ msg, index, messages, onRetry, p
               />
             ) : (
               <StreamingAnswer
+                thinkingTokens={msg.streaming?.thinkingTokens ?? ""}
                 tokens={msg.streaming?.tokens ?? ""}
                 finalAnswer={msg.streaming?.answer ?? msg.content}
                 isStreaming={!!isStreaming}

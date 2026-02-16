@@ -517,6 +517,7 @@ class CodyBackend(LLMBackend):
             context_items.append({
                 "type": "file",
                 "uri": {
+                    "scheme": "file",
                     "fsPath": filepath,
                     "path": filepath,
                 },

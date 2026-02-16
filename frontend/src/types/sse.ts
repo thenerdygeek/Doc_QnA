@@ -31,6 +31,10 @@ export interface SSEAnswerTokenData {
   token: string;
 }
 
+export interface SSEThinkingTokenData {
+  token: string;
+}
+
 export interface SSEAnswerData {
   answer: string;
   model: string;
@@ -63,6 +67,7 @@ export type SSEEvent =
   | { event: "status"; data: SSEStatusData }
   | { event: "intent"; data: SSEIntentData }
   | { event: "sources"; data: SSESourcesData }
+  | { event: "thinking_token"; data: SSEThinkingTokenData }
   | { event: "answer_token"; data: SSEAnswerTokenData }
   | { event: "answer"; data: SSEAnswerData }
   | { event: "attribution"; data: SSEAttributionData }

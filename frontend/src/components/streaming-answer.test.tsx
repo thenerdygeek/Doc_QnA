@@ -29,14 +29,14 @@ describe("StreamingAnswer", () => {
     render(
       <StreamingAnswer tokens="partial answer" finalAnswer={null} isStreaming={true} />,
     );
-    expect(screen.getByTestId("streamdown")).toHaveTextContent("partial answer");
+    expect(screen.getAllByTestId("streamdown")[0]).toHaveTextContent("partial answer");
   });
 
   it("renders finalAnswer when not streaming", () => {
     render(
       <StreamingAnswer tokens="old tokens" finalAnswer="Final result" isStreaming={false} />,
     );
-    expect(screen.getByTestId("streamdown")).toHaveTextContent("Final result");
+    expect(screen.getAllByTestId("streamdown")[0]).toHaveTextContent("Final result");
   });
 
   it("returns null when both are empty", () => {
@@ -50,7 +50,7 @@ describe("StreamingAnswer", () => {
     render(
       <StreamingAnswer tokens="streaming tokens" finalAnswer="final" isStreaming={true} />,
     );
-    expect(screen.getByTestId("streamdown")).toHaveTextContent("streaming tokens");
+    expect(screen.getAllByTestId("streamdown")[0]).toHaveTextContent("streaming tokens");
   });
 
   it("copy buttons injected into <pre> blocks after streaming ends", () => {
@@ -58,7 +58,7 @@ describe("StreamingAnswer", () => {
       <StreamingAnswer tokens="" finalAnswer="answer" isStreaming={false} />,
     );
     // Manually add a <pre> element into the container to simulate Streamdown rendering
-    const streamdownEl = screen.getByTestId("streamdown");
+    const streamdownEl = screen.getAllByTestId("streamdown")[0]!;
     const pre = document.createElement("pre");
     const code = document.createElement("code");
     code.textContent = "console.log('hi')";
@@ -357,5 +357,104 @@ describe("StreamingAnswer", () => {
     // Should still only have 1 copy-btn per pre (the existing one, not duplicated)
     const btns = pre.querySelectorAll(".copy-btn");
     expect(btns).toHaveLength(1);
+  });
+});
+
+describe("StreamingAnswer thinking", () => {
+  it("shows thinking section when thinkingTokens provided", () => {
+    const { container } = render(
+      <StreamingAnswer
+        thinkingTokens="Let me think about this..."
+        tokens=""
+        finalAnswer={null}
+        isStreaming={true}
+      />,
+    );
+    expect(container.querySelector(".thinking-section")).toBeInTheDocument();
+    expect(screen.getByText("Thinking...")).toBeInTheDocument();
+  });
+
+  it("hides thinking section when thinkingTokens is empty", () => {
+    const { container } = render(
+      <StreamingAnswer tokens="answer" finalAnswer={null} isStreaming={true} />,
+    );
+    expect(container.querySelector(".thinking-section")).not.toBeInTheDocument();
+  });
+
+  it("shows 'Thought process' label after streaming completes", () => {
+    render(
+      <StreamingAnswer
+        thinkingTokens="Some reasoning"
+        tokens="The answer"
+        finalAnswer="The answer"
+        isStreaming={false}
+      />,
+    );
+    expect(screen.getByText("Thought process")).toBeInTheDocument();
+  });
+
+  it("thinking is auto-expanded while actively thinking (no answer tokens yet)", () => {
+    const { container } = render(
+      <StreamingAnswer
+        thinkingTokens="thinking..."
+        tokens=""
+        finalAnswer={null}
+        isStreaming={true}
+      />,
+    );
+    const content = container.querySelector(".thinking-content");
+    expect(content).toBeInTheDocument();
+  });
+
+  it("thinking collapses once answer tokens start arriving", () => {
+    const { container } = render(
+      <StreamingAnswer
+        thinkingTokens="thinking..."
+        tokens="answer started"
+        finalAnswer={null}
+        isStreaming={true}
+      />,
+    );
+    // Not auto-expanded because tokens exist, and user hasn't manually expanded
+    const content = container.querySelector(".thinking-content");
+    expect(content).not.toBeInTheDocument();
+  });
+
+  it("toggle button expands/collapses thinking", () => {
+    const { container } = render(
+      <StreamingAnswer
+        thinkingTokens="Some reasoning"
+        tokens="The answer"
+        finalAnswer="The answer"
+        isStreaming={false}
+      />,
+    );
+
+    // Initially collapsed (not auto-expanded because not actively thinking)
+    expect(container.querySelector(".thinking-content")).not.toBeInTheDocument();
+
+    // Click to expand
+    const toggle = container.querySelector(".thinking-toggle")!;
+    fireEvent.click(toggle);
+    expect(container.querySelector(".thinking-content")).toBeInTheDocument();
+
+    // Click to collapse
+    fireEvent.click(toggle);
+    expect(container.querySelector(".thinking-content")).not.toBeInTheDocument();
+  });
+
+  it("renders both thinking and answer sections together", () => {
+    render(
+      <StreamingAnswer
+        thinkingTokens="reasoning here"
+        tokens="answer here"
+        finalAnswer={null}
+        isStreaming={true}
+      />,
+    );
+    // Should have 2 Streamdown instances: one potential in thinking (if expanded) + one for answer
+    // The answer section should be present
+    const answerProse = document.querySelector(".answer-prose");
+    expect(answerProse).toBeInTheDocument();
   });
 });

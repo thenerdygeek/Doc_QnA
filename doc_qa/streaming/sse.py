@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from typing import AsyncGenerator
 
@@ -246,23 +247,113 @@ async def streaming_query(
 
                     stream_task = asyncio.create_task(_run_streaming())
 
+                    # State machine for separating <think>...</think> from response
+                    in_thinking = False
+                    pending_buf = ""  # buffer for partial tag detection
+
+                    def _emit_tokens(text: str) -> list[ServerSentEvent]:
+                        """Split text into thinking vs answer events."""
+                        nonlocal in_thinking, pending_buf
+                        events: list[ServerSentEvent] = []
+                        text = pending_buf + text
+                        pending_buf = ""
+
+                        while text:
+                            if in_thinking:
+                                # Look for </think>
+                                end_idx = text.find("</think>")
+                                if end_idx != -1:
+                                    think_part = text[:end_idx]
+                                    if think_part:
+                                        events.append(ServerSentEvent(
+                                            data=json.dumps({"token": think_part}),
+                                            event="thinking_token",
+                                        ))
+                                    in_thinking = False
+                                    text = text[end_idx + len("</think>"):]
+                                elif text.endswith("<") or text.endswith("</") or text.endswith("</t") or text.endswith("</th") or text.endswith("</thi") or text.endswith("</thin") or text.endswith("</think"):
+                                    # Partial closing tag at end — buffer it
+                                    for i in range(min(len(text), 8), 0, -1):
+                                        if "</think>"[:i] == text[-i:]:
+                                            pending_buf = text[-i:]
+                                            remainder = text[:-i]
+                                            if remainder:
+                                                events.append(ServerSentEvent(
+                                                    data=json.dumps({"token": remainder}),
+                                                    event="thinking_token",
+                                                ))
+                                            break
+                                    else:
+                                        events.append(ServerSentEvent(
+                                            data=json.dumps({"token": text}),
+                                            event="thinking_token",
+                                        ))
+                                    text = ""
+                                else:
+                                    events.append(ServerSentEvent(
+                                        data=json.dumps({"token": text}),
+                                        event="thinking_token",
+                                    ))
+                                    text = ""
+                            else:
+                                # Look for <think>
+                                start_idx = text.find("<think>")
+                                if start_idx != -1:
+                                    before = text[:start_idx]
+                                    if before.strip():
+                                        events.append(ServerSentEvent(
+                                            data=json.dumps({"token": before}),
+                                            event="answer_token",
+                                        ))
+                                    in_thinking = True
+                                    text = text[start_idx + len("<think>"):]
+                                elif text.endswith("<") or text.endswith("<t") or text.endswith("<th") or text.endswith("<thi") or text.endswith("<thin") or text.endswith("<think"):
+                                    # Partial opening tag at end — buffer it
+                                    for i in range(min(len(text), 7), 0, -1):
+                                        if "<think>"[:i] == text[-i:]:
+                                            pending_buf = text[-i:]
+                                            remainder = text[:-i]
+                                            if remainder:
+                                                events.append(ServerSentEvent(
+                                                    data=json.dumps({"token": remainder}),
+                                                    event="answer_token",
+                                                ))
+                                            break
+                                    else:
+                                        events.append(ServerSentEvent(
+                                            data=json.dumps({"token": text}),
+                                            event="answer_token",
+                                        ))
+                                    text = ""
+                                else:
+                                    events.append(ServerSentEvent(
+                                        data=json.dumps({"token": text}),
+                                        event="answer_token",
+                                    ))
+                                    text = ""
+                        return events
+
                     # Emit token events as they arrive
                     while not stream_task.done():
                         try:
                             delta = await asyncio.wait_for(token_queue.get(), timeout=0.1)
-                            yield ServerSentEvent(
-                                data=json.dumps({"token": delta}),
-                                event="answer_token",
-                            )
+                            for evt in _emit_tokens(delta):
+                                yield evt
                         except asyncio.TimeoutError:
                             continue
 
                     # Drain remaining tokens
                     while not token_queue.empty():
                         delta = token_queue.get_nowait()
+                        for evt in _emit_tokens(delta):
+                            yield evt
+
+                    # Flush any pending buffer
+                    if pending_buf:
+                        evt_type = "thinking_token" if in_thinking else "answer_token"
                         yield ServerSentEvent(
-                            data=json.dumps({"token": delta}),
-                            event="answer_token",
+                            data=json.dumps({"token": pending_buf}),
+                            event=evt_type,
                         )
 
                     stream_answer = stream_task.result()

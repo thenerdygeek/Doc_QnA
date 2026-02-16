@@ -84,6 +84,10 @@ describe("streamQuery", () => {
       data: JSON.stringify({ status: "retrieving" }),
     });
     onmessage({
+      event: "thinking_token",
+      data: JSON.stringify({ token: "Let me think" }),
+    });
+    onmessage({
       event: "answer_token",
       data: JSON.stringify({ token: "Hello" }),
     });
@@ -92,10 +96,12 @@ describe("streamQuery", () => {
       data: JSON.stringify({ status: "complete", elapsed: 1.5 }),
     });
 
-    expect(onEvent).toHaveBeenCalledTimes(3);
+    expect(onEvent).toHaveBeenCalledTimes(4);
     expect(onEvent.mock.calls[0][0].event).toBe("status");
-    expect(onEvent.mock.calls[1][0].event).toBe("answer_token");
-    expect(onEvent.mock.calls[2][0].event).toBe("done");
+    expect(onEvent.mock.calls[1][0].event).toBe("thinking_token");
+    expect(onEvent.mock.calls[1][0].data).toEqual({ token: "Let me think" });
+    expect(onEvent.mock.calls[2][0].event).toBe("answer_token");
+    expect(onEvent.mock.calls[3][0].event).toBe("done");
   });
 
   it("skips keepalive ping with empty msg.data", async () => {

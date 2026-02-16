@@ -270,7 +270,7 @@ class TestWriteContextFiles:
         # Verify contextFile structure (matches CodyPy protocol)
         item = items[0]
         assert item["type"] == "file"
-        assert "scheme" not in item["uri"]
+        assert item["uri"]["scheme"] == "file"
         assert item["uri"]["fsPath"] == paths[0]
         assert item["uri"]["path"] == paths[0]
 

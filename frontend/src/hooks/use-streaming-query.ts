@@ -8,6 +8,7 @@ export type StreamPhase = "idle" | "streaming" | "complete" | "error";
 export interface StreamingQueryState {
   phase: StreamPhase;
   pipelineStatus: PipelineStatus | null;
+  thinkingTokens: string;
   tokens: string;
   answer: string | null;
   intent: string | null;
@@ -26,6 +27,7 @@ export interface StreamingQueryState {
 const INITIAL_STATE: StreamingQueryState = {
   phase: "idle",
   pipelineStatus: null,
+  thinkingTokens: "",
   tokens: "",
   answer: null,
   intent: null,
@@ -62,6 +64,8 @@ export function useStreamingQuery() {
             sources: event.data.sources,
             chunksRetrieved: event.data.chunks_retrieved,
           };
+        case "thinking_token":
+          return { ...prev, thinkingTokens: prev.thinkingTokens + event.data.token };
         case "answer_token":
           return { ...prev, tokens: prev.tokens + event.data.token };
         case "answer":

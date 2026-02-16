@@ -240,6 +240,47 @@ html.transitioning *::after {
   background: oklch(0.17 0.025 265 / 0.7);
 }
 
+/* ── Thinking section (collapsible reasoning) ───────────────── */
+.thinking-section {
+  @apply rounded-lg border border-border/40 bg-muted/30;
+}
+
+.dark .thinking-section {
+  @apply bg-muted/20;
+}
+
+.thinking-toggle {
+  @apply flex w-full items-center gap-1.5 px-3 py-2 text-xs text-muted-foreground transition-colors hover:text-foreground;
+  cursor: pointer;
+  background: none;
+  border: none;
+  font-family: inherit;
+}
+
+.thinking-label {
+  @apply font-medium;
+}
+
+.thinking-pulse {
+  @apply ml-1 inline-block h-1.5 w-1.5 rounded-full bg-primary/60;
+  animation: thinking-blink 1.2s ease-in-out infinite;
+}
+
+@keyframes thinking-blink {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+.thinking-content {
+  @apply border-t border-border/30 px-3 py-2 text-xs leading-relaxed text-muted-foreground/80;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.thinking-content p {
+  @apply mb-1.5;
+}
+
 /* ── Answer prose (Streamdown output) ────────────────────────── */
 .answer-prose {
   @apply text-sm leading-relaxed;
