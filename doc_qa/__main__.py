@@ -9,6 +9,8 @@ from pathlib import Path
 
 from doc_qa.config import load_config, resolve_db_path
 
+logger = logging.getLogger(__name__)
+
 
 def cmd_index(args: argparse.Namespace) -> None:
     """Index documentation from the given repo path."""
