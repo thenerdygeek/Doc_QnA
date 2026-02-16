@@ -164,6 +164,12 @@ class QueryPipeline:
                 model="none",
             )
 
+        # ── Near-duplicate dedup (version-aware) ─────────────────
+        # Remove near-duplicate chunks from different file versions,
+        # keeping the one from the most recently dated file.
+        from doc_qa.retrieval.dedup import deduplicate_near_duplicates
+        candidates = deduplicate_near_duplicates(candidates)
+
         # ── Rerank ────────────────────────────────────────────────
         reranked = candidates
         if self._rerank and len(candidates) > 1:
@@ -439,14 +445,26 @@ class QueryPipeline:
 
     @staticmethod
     def _build_context(chunks: list[RetrievedChunk]) -> str:
-        """Format retrieved chunks into a context string for the LLM."""
+        """Format retrieved chunks into a context string for the LLM.
+
+        Includes document dates when available so the LLM can prefer
+        more recent sources when information conflicts.
+        """
         if not chunks:
             return ""
+
+        from datetime import datetime, timezone
 
         parts: list[str] = []
         for i, chunk in enumerate(chunks, 1):
             filename = Path(chunk.file_path).name
             header = f"[Source {i}: {filename}"
+            # Include document date if available
+            if chunk.doc_date > 0:
+                date_str = datetime.fromtimestamp(
+                    chunk.doc_date, tz=timezone.utc
+                ).strftime("%Y-%m-%d")
+                header += f" ({date_str})"
             if chunk.section_title:
                 header += f" > {chunk.section_title}"
             header += f"] (score: {chunk.score:.3f})"

@@ -116,10 +116,14 @@ class TestStreamValidation:
         assert resp.status_code == 400
         assert "not found" in resp.json()["detail"].lower()
 
-    def test_reconnect_when_idle_returns_204(self, app_with_index) -> None:
+    def test_reconnect_when_idle_returns_sse_idle(self, app_with_index) -> None:
+        """When no job exists, reconnect returns an SSE stream with idle status."""
         client = TestClient(app_with_index)
         resp = client.get("/api/index/stream")
-        assert resp.status_code == 204
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers.get("content-type", "")
+        assert "event: status" in resp.text
+        assert '"idle"' in resp.text
 
 
 # ── Stream endpoint — successful indexing ────────────────────────
@@ -189,6 +193,133 @@ class TestStreamIndexing:
 
                 block.set()
                 future.result(timeout=10)
+
+    def test_stale_job_allows_restart(self, app_with_index, tmp_path: Path) -> None:
+        """If the previous job is stale (no progress for > timeout),
+        starting a new job should succeed instead of returning 409."""
+        import time as _time
+
+        docs_dir = _make_docs(tmp_path)
+        client = TestClient(app_with_index)
+
+        block = threading.Event()
+        entered = threading.Event()
+
+        def _blocking_scan(*args, **kwargs):
+            entered.set()
+            block.wait(timeout=10)
+            return []
+
+        with (
+            patch("doc_qa.indexing.job.scan_files", side_effect=_blocking_scan),
+            patch("doc_qa.indexing.job.DocIndex"),
+            patch("doc_qa.indexing.job._cleanup_temp"),
+            patch("doc_qa.api.server.save_config"),
+        ):
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(
+                    lambda: client.get(
+                        f"/api/index/stream?action=start&repo_path={docs_dir}",
+                    )
+                )
+
+                assert entered.wait(timeout=5)
+
+                # Simulate stale: backdate event timestamps and start_time
+                mgr = app_with_index.state.indexing_manager
+                for evt in mgr._job._event_buffer:
+                    evt.timestamp = _time.time() - 600
+                mgr._job._start_time = _time.time() - 600
+
+                # Starting again should succeed (stale job force-cleaned)
+                mock_swap = SwapResult(index=MagicMock(), retriever=MagicMock())
+                with (
+                    patch("doc_qa.indexing.job.scan_files", return_value=[]),
+                    patch("doc_qa.indexing.job.DocIndex") as MockIdx,
+                    patch("doc_qa.indexing.job._atomic_swap", return_value=mock_swap),
+                ):
+                    MockIdx.return_value.rebuild_fts_index = MagicMock()
+                    resp = client.get(
+                        f"/api/index/stream?action=start&repo_path={docs_dir}",
+                        headers={"Accept": "text/event-stream"},
+                    )
+                    # Should succeed (200 SSE), not 409
+                    assert resp.status_code == 200
+                    assert "event: status" in resp.text
+
+                block.set()
+                future.result(timeout=10)
+
+
+# ── Stream endpoint — terminal state replay ──────────────────────
+
+
+class TestTerminalReplay:
+    def test_reconnect_to_done_job_replays_events(self, app_with_index, tmp_path: Path) -> None:
+        """After a job completes, reconnecting should replay the done event."""
+        docs_dir = _make_docs(tmp_path)
+        client = TestClient(app_with_index)
+
+        mock_swap = SwapResult(index=MagicMock(), retriever=MagicMock())
+        with (
+            patch("doc_qa.indexing.job.scan_files", return_value=[]),
+            patch("doc_qa.indexing.job.DocIndex"),
+            patch("doc_qa.indexing.job._atomic_swap", return_value=mock_swap),
+            patch("doc_qa.indexing.job._cleanup_temp"),
+            patch("doc_qa.api.server.save_config"),
+        ):
+            # Run indexing to completion
+            client.get(f"/api/index/stream?action=start&repo_path={docs_dir}")
+
+        # Now reconnect — should replay terminal events as SSE
+        resp = client.get("/api/index/stream")
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers.get("content-type", "")
+        assert "event: done" in resp.text
+
+    def test_reconnect_to_error_job_replays_error(self, app_with_index, tmp_path: Path) -> None:
+        """After a job fails, reconnecting should replay the error event."""
+        docs_dir = _make_docs(tmp_path)
+        client = TestClient(app_with_index)
+
+        with (
+            patch("doc_qa.indexing.job.scan_files", side_effect=RuntimeError("boom")),
+            patch("doc_qa.indexing.job.DocIndex"),
+            patch("doc_qa.indexing.job._cleanup_temp"),
+            patch("doc_qa.api.server.save_config"),
+        ):
+            client.get(f"/api/index/stream?action=start&repo_path={docs_dir}")
+
+        resp = client.get("/api/index/stream")
+        assert resp.status_code == 200
+        assert "event: error" in resp.text
+        assert "boom" in resp.text
+
+
+# ── Stream endpoint — force_reindex parameter ────────────────────
+
+
+class TestForceReindex:
+    def test_force_reindex_param_accepted(self, app_with_index, tmp_path: Path) -> None:
+        """The force_reindex=true query param should be accepted."""
+        docs_dir = _make_docs(tmp_path)
+        client = TestClient(app_with_index)
+
+        mock_swap = SwapResult(index=MagicMock(), retriever=MagicMock())
+        with (
+            patch("doc_qa.indexing.job.scan_files", return_value=[]),
+            patch("doc_qa.indexing.job.DocIndex"),
+            patch("doc_qa.indexing.job._atomic_swap", return_value=mock_swap),
+            patch("doc_qa.indexing.job._cleanup_temp"),
+            patch("doc_qa.api.server.save_config"),
+        ):
+            resp = client.get(
+                f"/api/index/stream?action=start&repo_path={docs_dir}&force_reindex=true",
+            )
+            assert resp.status_code == 200
+            assert "event: done" in resp.text
 
 
 # ── Stream endpoint — cancel during indexing ─────────────────────

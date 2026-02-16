@@ -606,10 +606,16 @@ def create_app(
     # ── Indexing endpoints ─────────────────────────────────────────
 
     @app.get("/api/index/stream")
-    async def index_stream(request: Request, action: str | None = None, repo_path: str | None = None):
+    async def index_stream(
+        request: Request,
+        action: str | None = None,
+        repo_path: str | None = None,
+        force_reindex: bool = False,
+    ):
         """SSE stream for real-time indexing progress.
 
         - ``?action=start&repo_path=/path`` — start a new indexing job
+        - ``?action=start&repo_path=/path&force_reindex=true`` — full re-index
         - No params — reconnect to an existing job (replay + live)
         """
         from sse_starlette.sse import EventSourceResponse, ServerSentEvent
@@ -625,27 +631,56 @@ def create_app(
             if not rp.is_dir():
                 raise HTTPException(status_code=400, detail=f"Path not found: {repo_path}")
 
-            if indexing_manager.is_running:
-                raise HTTPException(status_code=409, detail="An indexing job is already running")
+            # Let the manager decide — it handles stale/dead job cleanup
+            # internally.  A pre-check here would bypass that logic and
+            # return 409 even for jobs that should be replaced.
+            try:
+                cfg.doc_repo.path = repo_path
+                save_config(cfg)
 
-            # Update config with new repo path
-            cfg.doc_repo.path = repo_path
-            save_config(cfg)
-
-            current_db_path = resolve_db_path(cfg, repo_path)
-            job = await indexing_manager.start(
-                repo_path=repo_path,
-                config=cfg,
-                db_path=current_db_path,
-                on_swap=_do_swap,
-            )
+                current_db_path = resolve_db_path(cfg, repo_path)
+                job = await indexing_manager.start(
+                    repo_path=repo_path,
+                    config=cfg,
+                    db_path=current_db_path,
+                    on_swap=_do_swap,
+                    force_reindex=force_reindex,
+                )
+            except RuntimeError as exc:
+                raise HTTPException(status_code=409, detail=str(exc))
         else:
             # Reconnect to existing job
             job = indexing_manager.current_job
-            if job is None or job.is_terminal:
-                # No job running — nothing to reconnect to
-                from starlette.responses import Response
-                return Response(status_code=204)
+            if job is None:
+                # No job at all — return SSE with idle status so the
+                # frontend gets a proper text/event-stream response.
+                async def _no_job():
+                    yield ServerSentEvent(
+                        data=json.dumps({"state": "idle"}),
+                        event="status",
+                    )
+                return EventSourceResponse(
+                    _no_job(),
+                    headers={"X-Accel-Buffering": "no"},
+                )
+
+            if job.is_terminal:
+                # Job finished — replay buffered events (including the
+                # terminal done/error/cancelled event) so the frontend
+                # can display the correct final state.
+                past_events = list(job._event_buffer)
+
+                async def _replay_terminal():
+                    for evt in past_events:
+                        yield ServerSentEvent(
+                            data=json.dumps(evt.data),
+                            event=evt.event,
+                        )
+
+                return EventSourceResponse(
+                    _replay_terminal(),
+                    headers={"X-Accel-Buffering": "no"},
+                )
 
         # Subscribe and stream events
         past_events, queue = job.subscribe()

@@ -39,6 +39,8 @@ export interface IndexingDoneData {
   total_files: number;
   total_chunks: number;
   elapsed: number;
+  /** Number of files skipped because they were unchanged (incremental indexing) */
+  skipped_unchanged?: number;
 }
 
 export interface IndexingCancelledData {

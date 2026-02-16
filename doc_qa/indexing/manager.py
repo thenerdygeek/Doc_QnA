@@ -52,14 +52,25 @@ class IndexingManager:
         return True
 
     def _is_stale(self) -> bool:
-        """Check if the current job appears stale (no progress for a while)."""
+        """Check if the current job appears stale (no progress for a while).
+
+        Covers two cases:
+        - Events were emitted but the last one is older than the timeout
+          (e.g. laptop slept mid-indexing).
+        - No events at all but the job started more than timeout ago
+          (e.g. stuck in scanning phase).
+        """
         if self._job is None or not self._job.is_running:
             return False
+        now = time.time()
         # Check the timestamp of the last emitted event
         if self._job._event_buffer:
             last_event_time = self._job._event_buffer[-1].timestamp
-            if time.time() - last_event_time > _STALE_JOB_TIMEOUT:
+            if now - last_event_time > _STALE_JOB_TIMEOUT:
                 return True
+        elif self._job._start_time and now - self._job._start_time > _STALE_JOB_TIMEOUT:
+            # No events emitted at all — stuck before first event
+            return True
         return False
 
     # ── Start / Cancel ────────────────────────────────────────
@@ -70,6 +81,7 @@ class IndexingManager:
         config: AppConfig,
         db_path: str,
         on_swap: OnSwapCallback,
+        force_reindex: bool = False,
     ) -> IndexingJob:
         """Launch a new indexing job. Raises if one is already running."""
         async with self._lock:
@@ -83,10 +95,15 @@ class IndexingManager:
                 else:
                     raise RuntimeError("An indexing job is already running")
 
-            job = IndexingJob(repo_path=repo_path, config=config, db_path=db_path)
+            job = IndexingJob(
+                repo_path=repo_path,
+                config=config,
+                db_path=db_path,
+                force_reindex=force_reindex,
+            )
             self._job = job
             self._task = asyncio.create_task(job.run(on_swap))
-            logger.info("Started indexing job for %s", repo_path)
+            logger.info("Started indexing job for %s (force_reindex=%s)", repo_path, force_reindex)
             return job
 
     def cancel(self) -> None:

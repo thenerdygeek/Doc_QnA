@@ -12,6 +12,7 @@ import {
     FileText,
     Folder,
     ArrowUp,
+    RefreshCw,
 } from "lucide-react";
 import {
     Dialog,
@@ -24,6 +25,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Switch } from "@/components/ui/switch";
 import { api } from "@/api/client";
 import type { UseSettingsReturn } from "@/hooks/use-settings";
 import type { UseIndexingReturn } from "@/hooks/use-indexing";
@@ -161,6 +163,7 @@ export function IndexingTab({ settings, indexing }: { settings: UseSettingsRetur
     const { config, updateSection, saving, restartRequired } = settings;
     const [repoPath, setRepoPath] = useState("");
     const [browseOpen, setBrowseOpen] = useState(false);
+    const [forceReindex, setForceReindex] = useState(false);
     const [form, setForm] = useState({
         chunk_size: 512,
         chunk_overlap: 50,
@@ -193,8 +196,8 @@ export function IndexingTab({ settings, indexing }: { settings: UseSettingsRetur
 
     const handleStartIndexing = useCallback(() => {
         if (!repoPath.trim()) return;
-        indexing.start(repoPath.trim());
-    }, [repoPath, indexing]);
+        indexing.start(repoPath.trim(), forceReindex);
+    }, [repoPath, indexing, forceReindex]);
 
     const handleSave = useCallback(async () => {
         await updateSection("indexing", form);
@@ -250,8 +253,22 @@ export function IndexingTab({ settings, indexing }: { settings: UseSettingsRetur
                     )}
                 </div>
                 <p className="text-muted-foreground text-xs">
-                    Path to a documentation folder (relative or absolute). A new index will replace the old one.
+                    Path to a documentation folder (relative or absolute). Only new and changed files will be indexed.
                 </p>
+
+                {/* Re-index toggle */}
+                <div className="flex items-center gap-2 pt-1">
+                    <Switch
+                        id="force-reindex"
+                        checked={forceReindex}
+                        onCheckedChange={setForceReindex}
+                        disabled={isRunning}
+                    />
+                    <Label htmlFor="force-reindex" className="flex cursor-pointer items-center gap-1.5 text-xs font-normal text-muted-foreground">
+                        <RefreshCw className="h-3 w-3" />
+                        Re-index all files
+                    </Label>
+                </div>
                 <FolderBrowser open={browseOpen} onClose={() => setBrowseOpen(false)} onSelect={setRepoPath} />
             </div>
 
@@ -320,6 +337,9 @@ export function IndexingTab({ settings, indexing }: { settings: UseSettingsRetur
                         <p className="mt-0.5 text-xs text-muted-foreground">
                             {indexing.totalFiles} files, {indexing.totalChunks} chunks in{" "}
                             {indexing.elapsed !== null ? `${indexing.elapsed}s` : "—"}
+                            {indexing.skippedUnchanged > 0 && (
+                                <> ({indexing.skippedUnchanged} unchanged, skipped)</>
+                            )}
                         </p>
                     </div>
                 </div>

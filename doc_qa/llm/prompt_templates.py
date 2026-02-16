@@ -10,7 +10,8 @@ SYSTEM_PROMPT = (
     "You are a documentation assistant. Answer the user's question "
     "based ONLY on the provided context. If the context does not contain "
     "enough information, say so clearly. Always cite sources using "
-    "[Source: filename] format."
+    "[Source: filename] format. When sources contain conflicting "
+    "information, prefer the most recently dated source."
 )
 
 # ── Intent Classification ────────────────────────────────────────────

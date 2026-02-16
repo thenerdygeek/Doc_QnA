@@ -29,6 +29,7 @@ class RetrievedChunk:
     section_level: int
     chunk_index: int
     vector: list[float] | None = None
+    doc_date: float = 0.0  # Unix timestamp for version-aware dedup
 
 
 class HybridRetriever:
@@ -229,6 +230,7 @@ class HybridRetriever:
                     section_level=int(arrow_table.column("section_level")[i].as_py()),
                     chunk_index=int(arrow_table.column("chunk_index")[i].as_py()),
                     vector=arrow_table.column("vector")[i].as_py() if "vector" in col_names else None,
+                    doc_date=float(arrow_table.column("doc_date")[i].as_py()) if "doc_date" in col_names else 0.0,
                 )
             )
 

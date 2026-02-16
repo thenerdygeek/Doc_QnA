@@ -16,6 +16,9 @@ from doc_qa.indexing.job import (
     IndexingState,
     SwapResult,
     _cleanup_temp,
+    _detect_changes_with_hashes,
+    _normalize_path,
+    _open_prod_index_readonly,
     _parse_and_chunk,
     _process_file,
 )
@@ -353,6 +356,167 @@ class TestIndexingJob:
         assert states == ["scanning", "indexing", "rebuilding_fts", "swapping"]
 
 
+# ── Incremental indexing tests ───────────────────────────────────
+
+
+class TestIncrementalIndexing:
+    """Tests for incremental indexing (skip unchanged files)."""
+
+    def test_detect_changes_all_new(self, tmp_path: Path):
+        """All files new when indexed_hashes is empty."""
+        repo = _make_test_repo(tmp_path)
+        files = [str(repo / "intro.md"), str(repo / "guide.md")]
+        new, changed, deleted = _detect_changes_with_hashes(files, {})
+        assert len(new) == 2
+        assert changed == []
+        assert deleted == []
+
+    def test_detect_changes_unchanged(self, tmp_path: Path):
+        """Files with matching hashes are not returned."""
+        repo = _make_test_repo(tmp_path)
+        from doc_qa.indexing.indexer import _compute_file_hash
+
+        intro_path = str(repo / "intro.md")
+        guide_path = str(repo / "guide.md")
+        intro_hash = _compute_file_hash(intro_path)
+        guide_hash = _compute_file_hash(guide_path)
+
+        indexed_hashes = {
+            _normalize_path(intro_path): intro_hash,
+            _normalize_path(guide_path): guide_hash,
+        }
+        new, changed, deleted = _detect_changes_with_hashes(
+            [intro_path, guide_path], indexed_hashes,
+        )
+        assert new == []
+        assert changed == []
+        assert deleted == []
+
+    def test_detect_changes_modified(self, tmp_path: Path):
+        """A file with a different hash should be detected as changed."""
+        repo = _make_test_repo(tmp_path)
+        intro_path = str(repo / "intro.md")
+        guide_path = str(repo / "guide.md")
+
+        from doc_qa.indexing.indexer import _compute_file_hash
+
+        indexed_hashes = {
+            _normalize_path(intro_path): "oldhash123",
+            _normalize_path(guide_path): _compute_file_hash(guide_path),
+        }
+        new, changed, deleted = _detect_changes_with_hashes(
+            [intro_path, guide_path], indexed_hashes,
+        )
+        assert new == []
+        assert changed == [intro_path]
+        assert deleted == []
+
+    def test_detect_changes_deleted(self, tmp_path: Path):
+        """A file in the index but not on disk should be deleted."""
+        repo = _make_test_repo(tmp_path)
+        intro_path = str(repo / "intro.md")
+
+        indexed_hashes = {
+            _normalize_path(intro_path): "somehash",
+            "docs/removed.md": "oldhash",
+        }
+        new, changed, deleted = _detect_changes_with_hashes(
+            [intro_path], indexed_hashes,
+        )
+        assert deleted == ["docs/removed.md"]
+
+    def test_open_prod_index_returns_none_when_missing(self, tmp_path: Path):
+        """Should return None if prod DB directory doesn't exist."""
+        result = _open_prod_index_readonly(str(tmp_path / "nonexistent"), "model")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_incremental_skips_unchanged_files(self, tmp_path: Path):
+        """When force_reindex=False and all files are unchanged, job finishes immediately."""
+        repo = _make_test_repo(tmp_path)
+        cfg = _make_config(str(repo))
+        db_path = str(tmp_path / "prod_db")
+
+        from doc_qa.indexing.indexer import _compute_file_hash
+
+        intro_path = str(repo / "intro.md")
+        guide_path = str(repo / "guide.md")
+
+        mock_prod_index = MagicMock()
+        mock_prod_index.count_rows.return_value = 10
+        mock_prod_index.get_indexed_file_hashes.return_value = {
+            _normalize_path(intro_path): _compute_file_hash(intro_path),
+            _normalize_path(guide_path): _compute_file_hash(guide_path),
+        }
+
+        job = IndexingJob(
+            repo_path=str(repo), config=cfg, db_path=db_path,
+            force_reindex=False,
+        )
+        _, queue = job.subscribe()
+
+        with (
+            patch("doc_qa.indexing.job.scan_files", return_value=[Path(intro_path), Path(guide_path)]),
+            patch("doc_qa.indexing.job._open_prod_index_readonly", return_value=mock_prod_index),
+            patch("doc_qa.indexing.job._cleanup_temp"),
+        ):
+            await job.run(AsyncMock())
+
+        assert job.state == IndexingState.done
+        # Should show all files as total but with skipped_unchanged
+        events = []
+        while not queue.empty():
+            evt = queue.get_nowait()
+            if evt is None:
+                break
+            events.append(evt)
+
+        done_events = [e for e in events if e.event == "done"]
+        assert len(done_events) == 1
+        assert done_events[0].data["skipped_unchanged"] == 2
+
+    @pytest.mark.asyncio
+    async def test_force_reindex_processes_all_files(self, tmp_path: Path):
+        """When force_reindex=True, all files are processed even if unchanged."""
+        repo = _make_test_repo(tmp_path)
+        cfg = _make_config(str(repo))
+        db_path = str(tmp_path / "prod_db")
+
+        job = IndexingJob(
+            repo_path=str(repo), config=cfg, db_path=db_path,
+            force_reindex=True,
+        )
+        _, queue = job.subscribe()
+
+        mock_chunk = MagicMock()
+        mock_chunk.file_path = str(repo / "intro.md")
+        mock_swap = SwapResult(index=MagicMock(), retriever=MagicMock())
+
+        with (
+            patch("doc_qa.indexing.job.scan_files", return_value=[repo / "intro.md", repo / "guide.md"]),
+            patch("doc_qa.indexing.job._parse_and_chunk", return_value={"chunks": [mock_chunk], "sections": 1, "skipped": False, "file_hash": "abc"}),
+            patch("doc_qa.indexing.job._bulk_add_chunks", return_value=1),
+            patch("doc_qa.indexing.job.DocIndex") as MockIndex,
+            patch("doc_qa.indexing.job._atomic_swap", return_value=mock_swap),
+            patch("doc_qa.indexing.job._cleanup_temp"),
+        ):
+            MockIndex.return_value.rebuild_fts_index = MagicMock()
+            await job.run(AsyncMock())
+
+        assert job.state == IndexingState.done
+        assert job.processed_files == 2  # All files processed
+
+        events = []
+        while not queue.empty():
+            evt = queue.get_nowait()
+            if evt is None:
+                break
+            events.append(evt)
+
+        done_events = [e for e in events if e.event == "done"]
+        assert done_events[0].data.get("skipped_unchanged", 0) == 0
+
+
 # ── _process_file tests ──────────────────────────────────────────
 
 
@@ -525,5 +689,134 @@ class TestIndexingManager:
             assert status["state"] == "scanning"
             assert status["repo_path"] == str(repo)
 
+            block_event.set()
+            await asyncio.sleep(0.5)
+
+    @pytest.mark.asyncio
+    async def test_dead_task_detected_and_allows_restart(self, tmp_path: Path):
+        """If the asyncio Task crashes but job state is still 'indexing',
+        is_running should detect it, set error, and allow a new start."""
+        repo = _make_test_repo(tmp_path)
+        cfg = _make_config(str(repo))
+        mgr = IndexingManager()
+
+        # Create a job that crashes immediately
+        async def _crashing_run(on_swap):
+            raise RuntimeError("unexpected crash")
+
+        with (
+            patch("doc_qa.indexing.job.scan_files", return_value=[]),
+            patch("doc_qa.indexing.job.DocIndex"),
+            patch("doc_qa.indexing.job._cleanup_temp"),
+        ):
+            job = await mgr.start(str(repo), cfg, str(tmp_path / "db"), AsyncMock())
+            # Manually replace job.run with one that crashes, and create a new task
+            mgr._task.cancel()
+            await asyncio.sleep(0.1)
+            job._state = IndexingState.indexing  # simulate stuck state
+            mgr._task = asyncio.create_task(_crashing_run(None))
+            await asyncio.sleep(0.1)
+
+            # Task is done (crashed) but job state is still 'indexing'
+            assert mgr._task.done()
+            assert job._state == IndexingState.indexing  # before is_running fixes it
+
+            # is_running should detect the dead task and set error
+            assert not mgr.is_running
+            assert job.state == IndexingState.error
+
+            # Now we should be able to start a new job
+            with (
+                patch("doc_qa.indexing.job.scan_files", return_value=[]),
+                patch("doc_qa.indexing.job.DocIndex") as MockIdx,
+                patch("doc_qa.indexing.job._atomic_swap", return_value=SwapResult(MagicMock(), MagicMock())),
+                patch("doc_qa.indexing.job._cleanup_temp"),
+            ):
+                MockIdx.return_value.rebuild_fts_index = MagicMock()
+                job2 = await mgr.start(str(repo), cfg, str(tmp_path / "db2"), AsyncMock())
+                await asyncio.sleep(0.5)
+                assert job2.is_terminal
+                assert job2.state == IndexingState.done
+
+    @pytest.mark.asyncio
+    async def test_stale_job_replaced_on_start(self, tmp_path: Path):
+        """A stale job (no events for > timeout) should be force-cleaned
+        and replaced when start() is called again."""
+        import time as _time
+
+        repo = _make_test_repo(tmp_path)
+        cfg = _make_config(str(repo))
+        mgr = IndexingManager()
+
+        block_event = threading.Event()
+        entered_scan = threading.Event()
+
+        def _blocking_scan(*args, **kwargs):
+            entered_scan.set()
+            block_event.wait(timeout=5)
+            return []
+
+        with (
+            patch("doc_qa.indexing.job.scan_files", side_effect=_blocking_scan),
+            patch("doc_qa.indexing.job.DocIndex"),
+            patch("doc_qa.indexing.job._cleanup_temp"),
+        ):
+            await mgr.start(str(repo), cfg, str(tmp_path / "db"), AsyncMock())
+            await asyncio.get_running_loop().run_in_executor(None, entered_scan.wait, 5)
+
+            assert mgr.is_running
+
+            # Simulate stale: backdate all event timestamps and start_time
+            for evt in mgr._job._event_buffer:
+                evt.timestamp = _time.time() - 600  # 10 min ago
+            mgr._job._start_time = _time.time() - 600
+
+            assert mgr._is_stale()
+
+            # Starting a new job should succeed (force-cleans the stale one)
+            with (
+                patch("doc_qa.indexing.job.scan_files", return_value=[]),
+                patch("doc_qa.indexing.job.DocIndex") as MockIdx,
+                patch("doc_qa.indexing.job._atomic_swap", return_value=SwapResult(MagicMock(), MagicMock())),
+                patch("doc_qa.indexing.job._cleanup_temp"),
+            ):
+                MockIdx.return_value.rebuild_fts_index = MagicMock()
+                job2 = await mgr.start(str(repo), cfg, str(tmp_path / "db2"), AsyncMock())
+                block_event.set()  # unblock old scan
+                await asyncio.sleep(0.5)
+                assert job2.is_terminal
+                assert job2.state == IndexingState.done
+
+    @pytest.mark.asyncio
+    async def test_stale_detected_when_no_events_emitted(self, tmp_path: Path):
+        """Stale detection works even when the event buffer is empty
+        (e.g., stuck in scanning before any events are emitted)."""
+        import time as _time
+
+        repo = _make_test_repo(tmp_path)
+        cfg = _make_config(str(repo))
+        mgr = IndexingManager()
+
+        block_event = threading.Event()
+        entered_scan = threading.Event()
+
+        def _blocking_scan(*args, **kwargs):
+            entered_scan.set()
+            block_event.wait(timeout=5)
+            return []
+
+        with (
+            patch("doc_qa.indexing.job.scan_files", side_effect=_blocking_scan),
+            patch("doc_qa.indexing.job.DocIndex"),
+            patch("doc_qa.indexing.job._cleanup_temp"),
+        ):
+            await mgr.start(str(repo), cfg, str(tmp_path / "db"), AsyncMock())
+            await asyncio.get_running_loop().run_in_executor(None, entered_scan.wait, 5)
+
+            # Clear event buffer and backdate start_time
+            mgr._job._event_buffer.clear()
+            mgr._job._start_time = _time.time() - 600
+
+            assert mgr._is_stale()
             block_event.set()
             await asyncio.sleep(0.5)

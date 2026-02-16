@@ -17,10 +17,13 @@ from typing import Any, Callable, Coroutine
 
 _IS_WINDOWS = sys.platform == "win32"
 
+import pyarrow as pa
+
 from doc_qa.config import AppConfig
 from doc_qa.indexing.chunker import Chunk, chunk_sections
 from doc_qa.indexing.indexer import DocIndex, _compute_file_hash
 from doc_qa.indexing.scanner import scan_files
+from doc_qa.parsers.date_extractor import extract_doc_date
 from doc_qa.parsers.registry import parse_file
 from doc_qa.retrieval.retriever import HybridRetriever
 
@@ -29,6 +32,7 @@ logger = logging.getLogger(__name__)
 # ── Parallel processing settings ─────────────────────────────────
 _MAX_WORKERS = 4          # parallel file parsing/chunking threads
 _EMBED_BATCH_SIZE = 50    # files to accumulate before bulk embedding + insert
+_CHUNK_SUB_BATCH = 500    # max chunks to embed+insert in one go (controls memory)
 _MAX_EVENT_BUFFER = 200   # max events kept for SSE replay on reconnect
 
 
@@ -90,10 +94,12 @@ class IndexingJob:
         repo_path: str,
         config: AppConfig,
         db_path: str,
+        force_reindex: bool = False,
     ) -> None:
         self.repo_path = repo_path
         self.config = config
         self.db_path = db_path
+        self.force_reindex = force_reindex
 
         self._state = IndexingState.idle
         self._cancel_event = asyncio.Event()
@@ -178,11 +184,20 @@ class IndexingJob:
     async def run(self, on_swap: OnSwapCallback) -> None:
         """Execute the full indexing pipeline.
 
+        When ``force_reindex`` is False (default), performs incremental
+        indexing: detects which files are new/changed/deleted compared to the
+        production index and only processes those.  Unchanged file chunks are
+        copied directly from the production DB (no re-embedding).
+
+        When ``force_reindex`` is True, rebuilds the entire index from scratch.
+
+        Pipeline:
         1. Scan files
-        2. Parse + chunk + index each file into temp DB
-        3. Rebuild FTS index
-        4. Atomic swap (temp → prod)
-        5. Done
+        2. Detect changes (incremental) or process all (force)
+        3. Parse + chunk + index into temp DB
+        4. Rebuild FTS index
+        5. Atomic swap (temp → prod)
+        6. Done
 
         Prevents the OS from sleeping while indexing is running.
         """
@@ -196,17 +211,79 @@ class IndexingJob:
           try:
             # ── Phase 1: Scanning ────────────────────────────
             self._set_state(IndexingState.scanning)
-            files = await loop.run_in_executor(None, scan_files, self.config.doc_repo)
-            self.total_files = len(files)
+            all_files = await loop.run_in_executor(None, scan_files, self.config.doc_repo)
+            self._check_cancelled()
+
+            # ── Incremental change detection ─────────────────
+            files_to_process: list[Path] = all_files
+            unchanged_files: set[str] = set()
+            skipped_count = 0
+
+            if not self.force_reindex:
+                prod_index = _open_prod_index_readonly(
+                    self.db_path, self.config.indexing.embedding_model,
+                )
+                if prod_index is not None:
+                    indexed_hashes = await loop.run_in_executor(
+                        None, prod_index.get_indexed_file_hashes,
+                    )
+                    if indexed_hashes:
+                        new_files, changed_files, deleted_files = await loop.run_in_executor(
+                            None,
+                            _detect_changes_with_hashes,
+                            [str(f) for f in all_files],
+                            indexed_hashes,
+                        )
+                        files_to_process_set = set(new_files) | set(changed_files)
+                        # Files in the prod index that are NOT changed/deleted
+                        all_indexed = set(indexed_hashes.keys())
+                        deleted_set = set(deleted_files)
+                        unchanged_files = all_indexed - deleted_set - set(
+                            _normalize_path(fp) for fp in changed_files
+                        )
+
+                        if not files_to_process_set and not deleted_files:
+                            # Nothing changed — emit done immediately
+                            self.total_files = len(all_files)
+                            self.processed_files = len(all_files)
+                            self.total_chunks = prod_index.count_rows()
+                            elapsed = round(time.time() - self._start_time, 1)
+                            self._state = IndexingState.done
+                            self._emit("progress", {
+                                "state": "done",
+                                "processed": self.total_files,
+                                "total_files": self.total_files,
+                                "total_chunks": self.total_chunks,
+                                "percent": 100,
+                                "message": "All files are up to date",
+                            })
+                            self._emit("done", {
+                                "total_files": self.total_files,
+                                "total_chunks": self.total_chunks,
+                                "elapsed": elapsed,
+                                "skipped_unchanged": self.total_files,
+                            })
+                            return
+
+                        files_to_process = [Path(f) for f in files_to_process_set]
+                        skipped_count = len(unchanged_files)
+                        logger.info(
+                            "Incremental indexing: %d new/changed, %d unchanged (skipped), %d deleted",
+                            len(files_to_process),
+                            skipped_count,
+                            len(deleted_files),
+                        )
+
+            self.total_files = len(files_to_process) + skipped_count
             self._emit("progress", {
                 "state": "scanning",
                 "processed": 0,
                 "total_files": self.total_files,
                 "total_chunks": 0,
                 "percent": 0,
-                "message": f"Found {self.total_files} files",
+                "message": f"Found {len(all_files)} files"
+                + (f" ({skipped_count} unchanged, skipped)" if skipped_count else ""),
             })
-            self._check_cancelled()
 
             # ── Phase 2: Indexing into temp DB ───────────────
             self._set_state(IndexingState.indexing)
@@ -218,6 +295,28 @@ class IndexingJob:
                 db_path=temp_db_path,
                 embedding_model=self.config.indexing.embedding_model,
             )
+
+            # Copy unchanged chunks from prod to temp (no re-embedding needed)
+            if unchanged_files and not self.force_reindex:
+                copied_chunks = await loop.run_in_executor(
+                    None,
+                    _copy_unchanged_chunks,
+                    self.db_path,
+                    temp_index,
+                    unchanged_files,
+                    self.config.indexing.embedding_model,
+                )
+                self.total_chunks += copied_chunks
+                self.processed_files += skipped_count
+                percent = int((self.processed_files / max(self.total_files, 1)) * 100)
+                self._emit("progress", {
+                    "state": "indexing",
+                    "processed": self.processed_files,
+                    "total_files": self.total_files,
+                    "total_chunks": self.total_chunks,
+                    "percent": percent,
+                    "message": f"Copied {copied_chunks} chunks from {skipped_count} unchanged files",
+                })
 
             chunk_size = self.config.indexing.chunk_size
             chunk_overlap = self.config.indexing.chunk_overlap
@@ -235,12 +334,12 @@ class IndexingJob:
             try:
                 # Submit parse jobs in batches
                 batch_start = 0
-                while batch_start < len(files):
+                while batch_start < len(files_to_process):
                     self._check_cancelled()
 
                     # Submit a batch of files for parallel parsing
-                    batch_end = min(batch_start + _EMBED_BATCH_SIZE, len(files))
-                    batch_files = files[batch_start:batch_end]
+                    batch_end = min(batch_start + _EMBED_BATCH_SIZE, len(files_to_process))
+                    batch_files = files_to_process[batch_start:batch_end]
 
                     # Submit to thread pool and wrap as asyncio futures
                     # so we can await them without blocking the event loop.
@@ -258,6 +357,8 @@ class IndexingJob:
 
                     # Collect parse results as they complete (non-blocking)
                     batch_chunks: list[Chunk] = []
+                    batch_hashes: dict[str, str] = {}
+                    batch_dates: dict[str, float] = {}
                     pending: set[asyncio.Future] = set(async_futures.keys())
 
                     while pending:
@@ -274,7 +375,7 @@ class IndexingJob:
                                 result = async_fut.result()
                             except Exception as exc:
                                 logger.warning("Failed to process %s: %s", file_path, exc)
-                                result = {"chunks": [], "sections": 0, "skipped": True, "file_hash": ""}
+                                result = {"chunks": [], "sections": 0, "skipped": True, "file_hash": "", "doc_date": 0.0}
 
                             self.processed_files += 1
                             n_chunks = len(result["chunks"])
@@ -300,19 +401,27 @@ class IndexingJob:
 
                             if result["chunks"]:
                                 batch_chunks.extend(result["chunks"])
+                            if result["file_hash"]:
+                                batch_hashes[file_path] = result["file_hash"]
+                            if result.get("doc_date", 0.0) > 0:
+                                batch_dates[file_path] = result["doc_date"]
 
-                    # Bulk embed + insert the entire batch at once
+                    # Bulk embed + insert — sub-batched to control memory.
+                    # A batch of 50 PDFs could produce 30K+ chunks; embedding
+                    # all at once would use ~300+ MB for Python float lists.
                     if batch_chunks:
                         await loop.run_in_executor(
                             None,
                             _bulk_add_chunks,
                             temp_index,
                             batch_chunks,
+                            batch_hashes,
+                            batch_dates,
                         )
 
                     batch_start = batch_end
             finally:
-                executor.shutdown(wait=False)
+                executor.shutdown(wait=False, cancel_futures=True)
 
             # ── Phase 3: Rebuild FTS ─────────────────────────
             self._check_cancelled()
@@ -340,6 +449,7 @@ class IndexingJob:
                 "total_files": self.total_files,
                 "total_chunks": self.total_chunks,
                 "elapsed": elapsed,
+                "skipped_unchanged": skipped_count,
             })
 
           except asyncio.CancelledError:
@@ -390,34 +500,59 @@ def _parse_and_chunk(
             return {"chunks": [], "sections": len(sections), "skipped": True, "file_hash": ""}
 
         file_hash = _compute_file_hash(file_path)
+        doc_date = extract_doc_date(file_path)
         return {
             "chunks": chunks,
             "sections": len(sections),
             "skipped": False,
             "file_hash": file_hash,
+            "doc_date": doc_date,
         }
 
     except Exception as exc:
         logger.warning("Failed to process %s: %s", file_path, exc)
-        return {"chunks": [], "sections": 0, "skipped": True, "file_hash": ""}
+        return {"chunks": [], "sections": 0, "skipped": True, "file_hash": "", "doc_date": 0.0}
 
 
-def _bulk_add_chunks(temp_index: DocIndex, chunks: list[Chunk]) -> int:
+def _bulk_add_chunks(
+    temp_index: DocIndex,
+    chunks: list[Chunk],
+    file_hashes: dict[str, str] | None = None,
+    doc_dates: dict[str, float] | None = None,
+) -> int:
     """Embed and insert a batch of chunks from multiple files at once.
 
     Batching embeddings is much more efficient than per-file embedding
     because the ONNX model can process larger batches in one pass.
+
+    When ``file_hashes`` is provided (from ``_parse_and_chunk`` results),
+    avoids re-reading every file for SHA-256 — saves significant I/O
+    for large repos.
+
+    For very large batches (e.g. 50 PDFs × 600 chunks = 30K chunks),
+    processes in sub-batches of ``_CHUNK_SUB_BATCH`` to control peak
+    memory usage during embedding.
     """
     if not chunks:
         return 0
 
-    # Group chunks by file for hash lookup
-    file_hashes: dict[str, str] = {}
+    # Build hash lookup — prefer pre-computed hashes, fall back to on-demand
+    if file_hashes is None:
+        file_hashes = {}
+    hashes: dict[str, str] = dict(file_hashes)
     for c in chunks:
-        if c.file_path not in file_hashes:
-            file_hashes[c.file_path] = _compute_file_hash(c.file_path)
+        if c.file_path not in hashes:
+            hashes[c.file_path] = _compute_file_hash(c.file_path)
 
-    return temp_index.add_chunks(chunks, file_hashes)
+    total_added = 0
+
+    # Sub-batch to control memory: embedding 30K chunks at once would
+    # allocate ~300+ MB for Python float lists.
+    for i in range(0, len(chunks), _CHUNK_SUB_BATCH):
+        sub = chunks[i : i + _CHUNK_SUB_BATCH]
+        total_added += temp_index.add_chunks(sub, hashes, doc_dates=doc_dates)
+
+    return total_added
 
 
 def _process_file(
@@ -560,3 +695,127 @@ def _cleanup_temp(temp_db_path: str) -> None:
     if p.exists():
         shutil.rmtree(p)
         logger.info("Cleaned up temp index: %s", temp_db_path)
+
+
+def _normalize_path(file_path: str) -> str:
+    """Normalize file path to forward slashes for cross-platform consistency."""
+    return file_path.replace("\\", "/")
+
+
+def _open_prod_index_readonly(
+    db_path: str, embedding_model: str,
+) -> DocIndex | None:
+    """Open the production index for read-only change detection.
+
+    Returns None if the production DB doesn't exist or is empty.
+    """
+    prod = Path(db_path)
+    if not prod.exists():
+        return None
+    try:
+        idx = DocIndex(db_path=db_path, embedding_model=embedding_model)
+        if idx.count_rows() == 0:
+            return None
+        return idx
+    except Exception as exc:
+        logger.warning("Could not open production index for change detection: %s", exc)
+        return None
+
+
+def _detect_changes_with_hashes(
+    file_paths: list[str],
+    indexed_hashes: dict[str, str],
+) -> tuple[list[str], list[str], list[str]]:
+    """Compare current files against indexed hashes.
+
+    Like ``DocIndex.detect_changes`` but takes pre-loaded hashes
+    (avoids re-reading the prod table inside the temp index context).
+
+    Returns:
+        (new_files, changed_files, deleted_files)
+    """
+    from doc_qa.indexing.indexer import _compute_file_hash
+
+    norm_to_orig = {_normalize_path(fp): fp for fp in file_paths}
+    current_set = set(norm_to_orig.keys())
+    indexed_set = set(indexed_hashes.keys())
+
+    new_files: list[str] = []
+    changed_files: list[str] = []
+
+    for norm_fp, orig_fp in norm_to_orig.items():
+        if norm_fp not in indexed_set:
+            new_files.append(orig_fp)
+        else:
+            current_hash = _compute_file_hash(orig_fp)
+            if current_hash != indexed_hashes[norm_fp]:
+                changed_files.append(orig_fp)
+
+    deleted_files = list(indexed_set - current_set)
+
+    logger.info(
+        "Change detection: %d new, %d changed, %d deleted",
+        len(new_files), len(changed_files), len(deleted_files),
+    )
+    return new_files, changed_files, deleted_files
+
+
+def _copy_unchanged_chunks(
+    prod_db_path: str,
+    temp_index: DocIndex,
+    unchanged_files: set[str],
+    embedding_model: str,
+) -> int:
+    """Copy chunk rows from production index to temp for unchanged files.
+
+    This avoids re-embedding unchanged files — the existing vectors are
+    copied directly, which is orders of magnitude faster.
+
+    For large tables (100K+ chunks), copies in batches to avoid holding
+    the entire table in memory at once.
+
+    Returns the number of chunks copied.
+    """
+    if not unchanged_files:
+        return 0
+
+    _COPY_BATCH = 2000  # files per batch for the IS_IN filter
+
+    try:
+        import pyarrow.compute as pc
+
+        prod_index = DocIndex(db_path=prod_db_path, embedding_model=embedding_model)
+
+        # For small file sets, do a single pass (simpler & faster)
+        unchanged_list = list(unchanged_files)
+        total_copied = 0
+
+        # Process in batches to control memory — each batch loads the
+        # full table but filters to a subset of files, keeping the
+        # filtered Arrow table small.
+        for batch_start in range(0, len(unchanged_list), _COPY_BATCH):
+            batch_files = unchanged_list[batch_start : batch_start + _COPY_BATCH]
+            value_set = pa.array(batch_files)
+
+            # Load and filter — LanceDB memory-maps the lance files so
+            # to_arrow() is reasonably efficient, but the result is a
+            # full materialized Arrow table.
+            arrow_table = prod_index._table.to_arrow()
+            file_col = arrow_table.column("file_path")
+            mask = pc.is_in(file_col, value_set=value_set)
+            filtered = arrow_table.filter(mask)
+
+            if filtered.num_rows > 0:
+                temp_index._table.add(filtered)
+                total_copied += filtered.num_rows
+
+            # Release references so GC can reclaim memory before next batch
+            del arrow_table, file_col, mask, filtered
+
+        if total_copied > 0:
+            logger.info("Copied %d unchanged chunks to temp index", total_copied)
+        return total_copied
+
+    except Exception as exc:
+        logger.warning("Failed to copy unchanged chunks: %s — will re-index all", exc)
+        return 0

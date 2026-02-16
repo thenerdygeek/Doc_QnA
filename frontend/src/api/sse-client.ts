@@ -44,6 +44,7 @@ export async function streamQuery({
 interface StreamIndexOptions {
   repoPath?: string;
   action?: "start";
+  forceReindex?: boolean;
   onEvent: (event: IndexingSSEEvent) => void;
   signal: AbortSignal;
 }
@@ -51,16 +52,38 @@ interface StreamIndexOptions {
 export async function streamIndex({
   repoPath,
   action,
+  forceReindex,
   onEvent,
   signal,
 }: StreamIndexOptions): Promise<void> {
   const params = new URLSearchParams();
   if (action) params.set("action", action);
   if (repoPath) params.set("repo_path", repoPath);
+  if (forceReindex) params.set("force_reindex", "true");
 
   await fetchEventSource(`/api/index/stream?${params}`, {
     signal,
     openWhenHidden: true,
+    async onopen(response) {
+      // Surface HTTP error status codes in the error message so
+      // callers (e.g. use-indexing) can detect 409, 400, etc.
+      // Without this, fetchEventSource throws a generic content-type
+      // mismatch error that hides the actual HTTP status.
+      if (response.ok) return;
+
+      let detail = "";
+      try {
+        const body = await response.json();
+        detail = body.detail || JSON.stringify(body);
+      } catch {
+        try {
+          detail = await response.text();
+        } catch {
+          detail = response.statusText;
+        }
+      }
+      throw new Error(`${response.status}: ${detail}`);
+    },
     onmessage(msg) {
       if (!msg.event || !msg.data) return;
 

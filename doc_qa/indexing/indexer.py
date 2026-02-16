@@ -67,6 +67,9 @@ class DocIndex:
                 self.TABLE_NAME,
                 table.count_rows(),
             )
+            # Migrate: add doc_date column if missing (pre-v2 indexes)
+            if "doc_date" not in table.schema.names:
+                self._migrate_add_doc_date(table)
             return table
 
         # Create with explicit schema
@@ -80,11 +83,36 @@ class DocIndex:
             pa.field("section_level", pa.int32()),
             pa.field("chunk_index", pa.int32()),
             pa.field("file_hash", pa.utf8()),
+            pa.field("doc_date", pa.float64()),
         ])
 
         table = self._db.create_table(self.TABLE_NAME, schema=schema)
         logger.info("Created new table '%s'.", self.TABLE_NAME)
         return table
+
+    def _migrate_add_doc_date(self, table: Any) -> None:
+        """Add doc_date column to an existing table (migration for pre-v2 indexes).
+
+        Sets all existing rows to 0.0 (unknown date = treated as oldest).
+        Next incremental or full re-index will backfill actual dates.
+        """
+        try:
+            # Read all data, add column, rewrite
+            arrow_table = table.to_arrow()
+            n = arrow_table.num_rows
+            doc_date_col = pa.array([0.0] * n, type=pa.float64())
+            new_table = arrow_table.append_column("doc_date", doc_date_col)
+            # Drop and recreate with new schema
+            self._db.drop_table(self.TABLE_NAME)
+            new_lance_table = self._db.create_table(self.TABLE_NAME, new_table)
+            logger.info("Migrated table '%s': added doc_date column (%d rows).", self.TABLE_NAME, n)
+            # Update internal reference
+            self._table = new_lance_table
+        except Exception:
+            logger.warning(
+                "Failed to migrate doc_date column — dates will be unavailable until re-index.",
+                exc_info=True,
+            )
 
     def _create_fts_index(self) -> None:
         """Create or rebuild the BM25 full-text search index on the text column."""
@@ -168,13 +196,20 @@ class DocIndex:
             logger.info("Deleted %d chunks for %s.", deleted, file_path)
         return deleted
 
-    def add_chunks(self, chunks: list[Chunk], file_hash: str | dict[str, str]) -> int:
+    def add_chunks(
+        self,
+        chunks: list[Chunk],
+        file_hash: str | dict[str, str],
+        doc_dates: dict[str, float] | None = None,
+    ) -> int:
         """Embed and add chunks to the index.
 
         Args:
             chunks: List of Chunk objects to add.
             file_hash: Either a single SHA-256 hash (all chunks from one file)
                 or a dict of ``{file_path: hash}`` for multi-file batches.
+            doc_dates: Optional dict of ``{file_path: unix_timestamp}`` for
+                version-aware retrieval. Defaults to 0.0 (unknown).
 
         Returns:
             Number of chunks added.
@@ -192,6 +227,8 @@ class DocIndex:
         else:
             hash_lookup = file_hash
 
+        date_lookup = doc_dates or {}
+
         # Build records
         records = []
         for chunk, vector in zip(chunks, vectors):
@@ -207,6 +244,7 @@ class DocIndex:
                 "section_level": chunk.section_level,
                 "chunk_index": chunk.chunk_index,
                 "file_hash": h,
+                "doc_date": date_lookup.get(chunk.file_path, 0.0),
             })
 
         self._table.add(records)

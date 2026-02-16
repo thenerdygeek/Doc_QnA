@@ -18,6 +18,8 @@ export interface IndexingState {
   recentFiles: IndexingFileDoneData[];
   elapsed: number | null;
   error: string | null;
+  /** Number of files skipped because they were unchanged (incremental) */
+  skippedUnchanged: number;
 }
 
 const INITIAL_STATE: IndexingState = {
@@ -31,12 +33,13 @@ const INITIAL_STATE: IndexingState = {
   recentFiles: [],
   elapsed: null,
   error: null,
+  skippedUnchanged: 0,
 };
 
 const MAX_RECENT_FILES = 10;
 
 export interface UseIndexingReturn extends IndexingState {
-  start: (repoPath: string) => void;
+  start: (repoPath: string, forceReindex?: boolean) => void;
   cancel: () => void;
   reconnect: () => void;
   reset: () => void;
@@ -50,6 +53,8 @@ export function useIndexing(): UseIndexingReturn {
     setState((prev) => {
       switch (event.event) {
         case "status":
+          // If backend reports idle state on reconnect, stay idle
+          if (event.data.state === "idle") return prev;
           return {
             ...prev,
             phase: "running",
@@ -85,6 +90,7 @@ export function useIndexing(): UseIndexingReturn {
             totalFiles: event.data.total_files,
             totalChunks: event.data.total_chunks,
             elapsed: event.data.elapsed,
+            skippedUnchanged: event.data.skipped_unchanged ?? 0,
           };
 
         case "cancelled":
@@ -109,7 +115,7 @@ export function useIndexing(): UseIndexingReturn {
   }, []);
 
   const start = useCallback(
-    (repoPath: string) => {
+    (repoPath: string, forceReindex = false) => {
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
@@ -119,6 +125,7 @@ export function useIndexing(): UseIndexingReturn {
       streamIndex({
         action: "start",
         repoPath,
+        forceReindex,
         onEvent: handleEvent,
         signal: controller.signal,
       }).catch((err) => {
@@ -167,20 +174,13 @@ export function useIndexing(): UseIndexingReturn {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    // Reset to running so UI shows progress
-    setState((prev) => ({
-      ...prev,
-      phase: prev.phase === "idle" ? "idle" : "running",
-    }));
-
     streamIndex({
       onEvent: handleEvent,
       signal: controller.signal,
-    }).catch((err) => {
-      if (controller.signal.aborted) return;
-      // 204 means no active job — stay idle
-      if (err?.message?.includes("204")) return;
-      // Don't treat connection errors during reconnect as failures
+    }).catch(() => {
+      // Reconnect failures are non-critical — the backend now always
+      // returns a proper SSE response (idle status or terminal replay),
+      // so errors here are genuine connection issues.  Stay in current state.
     });
   }, [handleEvent]);
 

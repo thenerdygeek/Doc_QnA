@@ -10,11 +10,15 @@ import os
 import shutil
 import sys
 import tarfile
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
+
+# Directory for temp context files passed to Cody as @mentions
+_CONTEXT_TEMP_DIR = os.path.join(tempfile.gettempdir(), "doc_qa_cody_context")
 
 # Cody agent version for auto-download (matches cody_agentic_tool)
 _CODY_AGENT_VERSION = "5.5.14"
@@ -31,12 +35,8 @@ class Answer:
     error: str | None = None
 
 
-_SYSTEM_PROMPT = (
-    "You are a documentation assistant. Answer the user's question "
-    "based ONLY on the provided context. If the context does not contain "
-    "enough information, say so clearly. Always cite sources using "
-    "[Source: filename] format."
-)
+# Import the canonical system prompt (single source of truth)
+from doc_qa.llm.prompt_templates import SYSTEM_PROMPT as _SYSTEM_PROMPT
 
 
 class LLMBackend(abc.ABC):
@@ -69,6 +69,9 @@ class _JSONRPCError(Exception):
         self.method = method
         self.error = error
         super().__init__(f"RPC error in {method}: {error}")
+
+
+_RPC_READ_TIMEOUT = 120  # seconds — matches cody_agentic_tool
 
 
 class _JSONRPCHandler:
@@ -115,14 +118,23 @@ class _JSONRPCHandler:
 
     async def _read(self) -> dict | None:
         try:
-            # Read headers until \r\n\r\n
-            header = await self._reader.readuntil(b"\r\n\r\n")
+            # Read headers until \r\n\r\n (with timeout to prevent hangs)
+            header = await asyncio.wait_for(
+                self._reader.readuntil(b"\r\n\r\n"),
+                timeout=_RPC_READ_TIMEOUT,
+            )
             length_line = header.split(b"\r\n")[0]
             content_length = int(length_line.split(b":")[1].strip())
 
             # Read exact body
-            body = await self._reader.readexactly(content_length)
+            body = await asyncio.wait_for(
+                self._reader.readexactly(content_length),
+                timeout=_RPC_READ_TIMEOUT,
+            )
             return json.loads(body)
+        except asyncio.TimeoutError:
+            logger.error("JSON-RPC read timed out after %ds", _RPC_READ_TIMEOUT)
+            return None
         except (asyncio.IncompleteReadError, asyncio.LimitOverrunError, ConnectionResetError):
             return None
 
@@ -131,8 +143,15 @@ class _JSONRPCHandler:
         method: str,
         params: Any = None,
         on_token: Callable[[str], None] | None = None,
+        on_token_usage: Callable[[dict], None] | None = None,
     ) -> Any:
-        """Send request and call *on_token* with cumulative text for each in-progress notification."""
+        """Send request and call *on_token* with cumulative text for each in-progress notification.
+
+        Args:
+            on_token: Called with partial assistant text as it streams.
+            on_token_usage: Called with token usage dict containing
+                completionTokens, promptTokens, percentUsed.
+        """
         self._msg_id += 1
         req_id = self._msg_id
         payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
@@ -151,6 +170,15 @@ class _JSONRPCHandler:
             if isinstance(msg_params, dict):
                 message_data = msg_params.get("message", msg_params)
                 if isinstance(message_data, dict) and message_data.get("isMessageInProgress"):
+                    # Extract token usage
+                    if on_token_usage:
+                        token_usage = message_data.get("tokenUsage")
+                        if token_usage and isinstance(token_usage, dict):
+                            try:
+                                on_token_usage(token_usage)
+                            except Exception:
+                                pass
+                    # Extract partial text
                     if on_token:
                         messages = message_data.get("messages", [])
                         if messages:
@@ -445,16 +473,100 @@ class CodyBackend(LLMBackend):
         self._initialized = True
         logger.info("Cody agent initialized (model=%s).", self._model)
 
-    async def _ensure_chat(self) -> str:
-        """Ensure we have an active chat session."""
-        if not self._chat_id:
-            self._chat_id = await self._rpc.request("chat/new", None)
-            # Set model
-            await self._rpc.request(
-                "chat/setModel",
-                {"id": self._chat_id, "model": self._model},
-            )
-        return self._chat_id
+    async def _new_chat(self) -> str:
+        """Create a fresh chat session with the configured model."""
+        chat_id = await self._rpc.request("chat/new", None)
+        await self._rpc.request(
+            "chat/setModel",
+            {"id": chat_id, "model": self._model},
+        )
+        return chat_id
+
+    @staticmethod
+    def _write_context_files(context: str) -> tuple[list[dict], list[str]]:
+        """Write context chunks to temp files and build contextItems.
+
+        Returns (context_items, temp_file_paths) where context_items is a list
+        of Cody contextItem dicts and temp_file_paths tracks files for cleanup.
+        """
+        if not context:
+            return [], []
+
+        os.makedirs(_CONTEXT_TEMP_DIR, exist_ok=True)
+        context_items: list[dict] = []
+        temp_paths: list[str] = []
+
+        # Split context into individual source chunks.
+        # Format: "[Source N: filename ...] (score: X.XXX)\n<text>\n\n[Source ..."
+        chunks = context.split("\n[Source ")
+        for i, chunk_text in enumerate(chunks):
+            raw = chunk_text.strip()
+            if not raw:
+                continue
+            # Re-add the "[Source " prefix that was consumed by split (except first)
+            if i > 0:
+                raw = "[Source " + raw
+
+            # Write to a temp file
+            filename = f"chunk_{i}.txt"
+            filepath = os.path.join(_CONTEXT_TEMP_DIR, filename)
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(raw)
+            temp_paths.append(filepath)
+
+            context_items.append({
+                "type": "file",
+                "uri": {
+                    "scheme": "file",
+                    "fsPath": filepath,
+                    "path": filepath,
+                },
+            })
+
+        return context_items, temp_paths
+
+    @staticmethod
+    def _cleanup_context_files(temp_paths: list[str]) -> None:
+        """Remove temporary context files."""
+        for p in temp_paths:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+
+    async def _notify_context_files(self, context_items: list[dict]) -> None:
+        """Send textDocument/didOpen for each context file so the agent is aware."""
+        for item in context_items:
+            fs_path = item.get("uri", {}).get("fsPath")
+            if not fs_path:
+                continue
+            try:
+                with open(fs_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                await self._rpc.notify("textDocument/didOpen", {
+                    "uri": Path(fs_path).as_uri(),
+                    "content": content,
+                })
+            except Exception as exc:
+                logger.debug("Failed to notify didOpen for %s: %s", fs_path, exc)
+
+    def _build_request_data(
+        self,
+        chat_id: str,
+        prompt: str,
+        context_items: list[dict],
+    ) -> dict:
+        """Build the chat/submitMessage request payload."""
+        return {
+            "id": chat_id,
+            "message": {
+                "command": "submit",
+                "text": prompt,
+                "submitType": "user",
+                "addEnhancedContext": False,
+                "contextItems": context_items,
+            },
+        }
 
     async def ask(
         self,
@@ -462,32 +574,35 @@ class CodyBackend(LLMBackend):
         context: str,
         history: list[dict] | None = None,
     ) -> Answer:
-        """Send question + context to Cody and get the answer."""
-        async with self._rpc_lock:
-            await self._ensure_initialized()
-            chat_id = await self._ensure_chat()
+        """Send question + context to Cody and get the answer.
 
-            prompt = self._build_prompt(question, context, history)
+        Each call creates a fresh chat session to prevent transcript bloat.
+        Context chunks are written to temp files and passed as contextItems
+        (file @mentions) to leverage Cody's higher context budget.
+        """
+        context_items, temp_paths = self._write_context_files(context)
+        try:
+            async with self._rpc_lock:
+                await self._ensure_initialized()
+                chat_id = await self._new_chat()
 
-            request_data = {
-                "id": chat_id,
-                "message": {
-                    "command": "submit",
-                    "text": prompt,
-                    "contextItems": [],
-                },
-            }
+                # Notify agent about context files for better awareness
+                await self._notify_context_files(context_items)
 
-            try:
-                response = await self._rpc.request("chat/submitMessage", request_data)
-            except _JSONRPCError as e:
-                logger.error("Cody RPC error: %s", e.error)
-                return Answer(text="", sources=[], model=self._model, error=str(e.error))
-            except ConnectionError as e:
-                logger.error("Cody connection lost: %s", e)
-                self._initialized = False
-                self._chat_id = None
-                return Answer(text="", sources=[], model=self._model, error=str(e))
+                prompt = self._build_prompt(question, context="", history=history)
+                request_data = self._build_request_data(chat_id, prompt, context_items)
+
+                try:
+                    response = await self._rpc.request("chat/submitMessage", request_data)
+                except _JSONRPCError as e:
+                    logger.error("Cody RPC error: %s", e.error)
+                    return Answer(text="", sources=[], model=self._model, error=str(e.error))
+                except ConnectionError as e:
+                    logger.error("Cody connection lost: %s", e)
+                    self._initialized = False
+                    return Answer(text="", sources=[], model=self._model, error=str(e))
+        finally:
+            self._cleanup_context_files(temp_paths)
 
         # Reset restart count on successful round-trip
         self._restart_count = 0
@@ -501,40 +616,43 @@ class CodyBackend(LLMBackend):
         context: str,
         history: list[dict] | None = None,
         on_token: Callable[[str], None] | None = None,
+        on_token_usage: Callable[[dict], None] | None = None,
     ) -> Answer:
         """Send question + context to Cody with streaming token callbacks.
 
         Works like :meth:`ask` but invokes *on_token* with the cumulative
         assistant text each time an ``isMessageInProgress`` notification
         arrives from the agent.
+
+        Args:
+            on_token_usage: Called with token usage dict containing
+                completionTokens, promptTokens, percentUsed.
         """
-        async with self._rpc_lock:
-            await self._ensure_initialized()
-            chat_id = await self._ensure_chat()
+        context_items, temp_paths = self._write_context_files(context)
+        try:
+            async with self._rpc_lock:
+                await self._ensure_initialized()
+                chat_id = await self._new_chat()
 
-            prompt = self._build_prompt(question, context, history)
+                await self._notify_context_files(context_items)
 
-            request_data = {
-                "id": chat_id,
-                "message": {
-                    "command": "submit",
-                    "text": prompt,
-                    "contextItems": [],
-                },
-            }
+                prompt = self._build_prompt(question, context="", history=history)
+                request_data = self._build_request_data(chat_id, prompt, context_items)
 
-            try:
-                response = await self._rpc.request_streaming(
-                    "chat/submitMessage", request_data, on_token=on_token,
-                )
-            except _JSONRPCError as e:
-                logger.error("Cody RPC error: %s", e.error)
-                return Answer(text="", sources=[], model=self._model, error=str(e.error))
-            except ConnectionError as e:
-                logger.error("Cody connection lost: %s", e)
-                self._initialized = False
-                self._chat_id = None
-                return Answer(text="", sources=[], model=self._model, error=str(e))
+                try:
+                    response = await self._rpc.request_streaming(
+                        "chat/submitMessage", request_data,
+                        on_token=on_token, on_token_usage=on_token_usage,
+                    )
+                except _JSONRPCError as e:
+                    logger.error("Cody RPC error: %s", e.error)
+                    return Answer(text="", sources=[], model=self._model, error=str(e.error))
+                except ConnectionError as e:
+                    logger.error("Cody connection lost: %s", e)
+                    self._initialized = False
+                    return Answer(text="", sources=[], model=self._model, error=str(e))
+        finally:
+            self._cleanup_context_files(temp_paths)
 
         # Reset restart count on successful round-trip
         self._restart_count = 0
@@ -545,10 +663,16 @@ class CodyBackend(LLMBackend):
     def _build_prompt(
         self,
         question: str,
-        context: str,
+        context: str = "",
         history: list[dict] | None = None,
     ) -> str:
-        """Build the prompt combining context, history, and question."""
+        """Build the prompt text sent in the message field.
+
+        When context is passed as contextItems (file @mentions), the *context*
+        parameter should be empty — the system prompt + history + question is
+        all that goes in the text field, keeping it within the ~10K text budget.
+        Context is still accepted for backward compatibility (e.g. Ollama).
+        """
         parts: list[str] = []
 
         parts.append(_SYSTEM_PROMPT + "\n")
@@ -593,14 +717,14 @@ class CodyBackend(LLMBackend):
 
         return ""
 
-    # -- Fix #7: new_conversation checks agent health ----------------------
-
     async def new_conversation(self) -> None:
-        """Start a new chat session (for multi-turn reset)."""
+        """Reset conversation state.
+
+        Each ask() already creates a fresh chat session, so this just checks
+        agent health and clears any stale state.
+        """
         if self._initialized and self._process and self._process.returncode is not None:
-            # Agent died — mark as not initialized so next ask() restarts it
             self._initialized = False
-        self._chat_id = None
 
     async def close(self) -> None:
         """Shut down the Cody agent process."""
