@@ -384,7 +384,7 @@ def create_app(
 
     @app.get("/api/stats", response_model=StatsResponse)
     async def stats() -> StatsResponse:
-        s = index.stats()
+        s = app.state.index.stats()
         return StatsResponse(
             total_chunks=s["total_chunks"],
             total_files=s["total_files"],
@@ -401,7 +401,7 @@ def create_app(
                 status_code=400,
                 detail=f"Query too long. Maximum length is {cfg.retrieval.max_query_length} characters.",
             )
-        chunks = retriever.search(
+        chunks = app.state.retriever.search(
             query=req.question,
             top_k=req.top_k,
             min_score=cfg.retrieval.min_score,

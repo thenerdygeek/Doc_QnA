@@ -267,10 +267,10 @@ class TestWriteContextFiles:
         assert len(paths) == 1
         assert os.path.isfile(paths[0])
 
-        # Verify contextItem structure
+        # Verify contextFile structure (matches CodyPy protocol)
         item = items[0]
         assert item["type"] == "file"
-        assert item["uri"]["scheme"] == "file"
+        assert "scheme" not in item["uri"]
         assert item["uri"]["fsPath"] == paths[0]
         assert item["uri"]["path"] == paths[0]
 
@@ -320,7 +320,7 @@ class TestBuildRequestData:
     def test_structure(self) -> None:
         with patch("doc_qa.llm.backend._find_cody_binary", return_value="/usr/bin/cody"):
             backend = CodyBackend()
-        items = [{"type": "file", "uri": {"scheme": "file", "fsPath": "/tmp/c.txt", "path": "/tmp/c.txt"}}]
+        items = [{"type": "file", "uri": {"fsPath": "/tmp/c.txt", "path": "/tmp/c.txt"}}]
         data = backend._build_request_data("chat-123", "my prompt", items)
 
         assert data["id"] == "chat-123"
@@ -329,13 +329,13 @@ class TestBuildRequestData:
         assert msg["text"] == "my prompt"
         assert msg["submitType"] == "user"
         assert msg["addEnhancedContext"] is False
-        assert msg["contextItems"] == items
+        assert msg["contextFiles"] == items
 
-    def test_empty_context_items(self) -> None:
+    def test_empty_context_files(self) -> None:
         with patch("doc_qa.llm.backend._find_cody_binary", return_value="/usr/bin/cody"):
             backend = CodyBackend()
         data = backend._build_request_data("chat-123", "prompt", [])
-        assert data["message"]["contextItems"] == []
+        assert data["message"]["contextFiles"] == []
 
 
 # --- CodyBackend: prompt building with empty context ---
@@ -343,7 +343,7 @@ class TestBuildRequestData:
 
 class TestBuildPromptContextHandling:
     def test_no_context_in_prompt_when_empty(self) -> None:
-        """When context is empty (passed via contextItems instead), prompt should not include Context section."""
+        """When context is empty (passed via contextFiles instead), prompt should not include Context section."""
         with patch("doc_qa.llm.backend._find_cody_binary", return_value="/usr/bin/cody"):
             backend = CodyBackend()
         prompt = backend._build_prompt("What is auth?", context="")
@@ -399,8 +399,8 @@ class TestNotifyContextFiles:
         f2.write_text("content of chunk 1")
 
         items = [
-            {"type": "file", "uri": {"scheme": "file", "fsPath": str(f1), "path": str(f1)}},
-            {"type": "file", "uri": {"scheme": "file", "fsPath": str(f2), "path": str(f2)}},
+            {"type": "file", "uri": {"fsPath": str(f1), "path": str(f1)}},
+            {"type": "file", "uri": {"fsPath": str(f2), "path": str(f2)}},
         ]
 
         mock_rpc = AsyncMock()

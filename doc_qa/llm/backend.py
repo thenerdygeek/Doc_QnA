@@ -484,7 +484,7 @@ class CodyBackend(LLMBackend):
 
     @staticmethod
     def _write_context_files(context: str) -> tuple[list[dict], list[str]]:
-        """Write context chunks to temp files and build contextItems.
+        """Write context chunks to temp files and build contextFiles.
 
         Returns (context_items, temp_file_paths) where context_items is a list
         of Cody contextItem dicts and temp_file_paths tracks files for cleanup.
@@ -517,7 +517,6 @@ class CodyBackend(LLMBackend):
             context_items.append({
                 "type": "file",
                 "uri": {
-                    "scheme": "file",
                     "fsPath": filepath,
                     "path": filepath,
                 },
@@ -554,7 +553,7 @@ class CodyBackend(LLMBackend):
         self,
         chat_id: str,
         prompt: str,
-        context_items: list[dict],
+        context_files: list[dict],
     ) -> dict:
         """Build the chat/submitMessage request payload."""
         return {
@@ -564,7 +563,7 @@ class CodyBackend(LLMBackend):
                 "text": prompt,
                 "submitType": "user",
                 "addEnhancedContext": False,
-                "contextItems": context_items,
+                "contextFiles": context_files,
             },
         }
 
@@ -577,10 +576,16 @@ class CodyBackend(LLMBackend):
         """Send question + context to Cody and get the answer.
 
         Each call creates a fresh chat session to prevent transcript bloat.
-        Context chunks are written to temp files and passed as contextItems
+        Context chunks are written to temp files and passed as contextFiles
         (file @mentions) to leverage Cody's higher context budget.
         """
         context_items, temp_paths = self._write_context_files(context)
+        logger.info(
+            "Cody ask: %d context files, question=%r",
+            len(context_items), question[:80],
+        )
+        for ci in context_items:
+            logger.debug("  contextFile: %s", ci.get("uri", {}).get("fsPath", "?"))
         try:
             async with self._rpc_lock:
                 await self._ensure_initialized()
@@ -629,6 +634,12 @@ class CodyBackend(LLMBackend):
                 completionTokens, promptTokens, percentUsed.
         """
         context_items, temp_paths = self._write_context_files(context)
+        logger.info(
+            "Cody ask_streaming: %d context files, question=%r",
+            len(context_items), question[:80],
+        )
+        for ci in context_items:
+            logger.debug("  contextFile: %s", ci.get("uri", {}).get("fsPath", "?"))
         try:
             async with self._rpc_lock:
                 await self._ensure_initialized()
@@ -668,7 +679,7 @@ class CodyBackend(LLMBackend):
     ) -> str:
         """Build the prompt text sent in the message field.
 
-        When context is passed as contextItems (file @mentions), the *context*
+        When context is passed as contextFiles (file @mentions), the *context*
         parameter should be empty — the system prompt + history + question is
         all that goes in the text field, keeping it within the ~10K text budget.
         Context is still accepted for backward compatibility (e.g. Ollama).
