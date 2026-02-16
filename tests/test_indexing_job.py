@@ -21,6 +21,7 @@ from doc_qa.indexing.job import (
     _open_prod_index_readonly,
     _parse_and_chunk,
     _process_file,
+    _reopen_from_prod,
 )
 from doc_qa.indexing.manager import IndexingManager
 
@@ -820,3 +821,133 @@ class TestIndexingManager:
             assert mgr._is_stale()
             block_event.set()
             await asyncio.sleep(0.5)
+
+
+# ── Windows swap re-open tests ───────────────────────────────────
+
+
+class TestWindowsSwapReopen:
+    """Tests for the Windows post-finalization re-open fix."""
+
+    @pytest.mark.asyncio
+    async def test_windows_swap_reopens_from_prod(self, tmp_path: Path):
+        """On Windows, on_swap should be called twice: once with temp path,
+        once with reopened prod path after finalization."""
+        repo = _make_test_repo(tmp_path)
+        cfg = _make_config(str(repo))
+        db_path = str(tmp_path / "prod_db")
+
+        # Build a SwapResult that simulates Windows (temp_db_path is set)
+        mock_windows_swap = SwapResult(
+            index=MagicMock(),
+            retriever=MagicMock(),
+            temp_db_path=str(tmp_path / "temp_building"),
+            prod_db_path=db_path,
+        )
+        mock_reopened_swap = SwapResult(
+            index=MagicMock(),
+            retriever=MagicMock(),
+        )
+
+        on_swap = AsyncMock()
+        mock_chunk = MagicMock()
+        mock_chunk.file_path = str(repo / "intro.md")
+
+        with (
+            patch("doc_qa.indexing.job.scan_files", return_value=[repo / "intro.md"]),
+            patch("doc_qa.indexing.job._parse_and_chunk", return_value={
+                "chunks": [mock_chunk], "sections": 1, "skipped": False, "file_hash": "abc",
+            }),
+            patch("doc_qa.indexing.job._bulk_add_chunks", return_value=1),
+            patch("doc_qa.indexing.job.DocIndex") as MockIndex,
+            patch("doc_qa.indexing.job._atomic_swap", return_value=mock_windows_swap),
+            patch("doc_qa.indexing.job._finalize_swap_directories"),
+            patch("doc_qa.indexing.job._reopen_from_prod", return_value=mock_reopened_swap),
+            patch("doc_qa.indexing.job._cleanup_temp"),
+        ):
+            MockIndex.return_value.rebuild_fts_index = MagicMock()
+
+            job = IndexingJob(repo_path=str(repo), config=cfg, db_path=db_path)
+            await job.run(on_swap)
+
+        assert job.state == IndexingState.done
+
+        # on_swap called twice: first with temp-path result, then with reopened prod result
+        assert on_swap.call_count == 2
+        on_swap.assert_any_call(mock_windows_swap)
+        on_swap.assert_any_call(mock_reopened_swap)
+
+    @pytest.mark.asyncio
+    async def test_unix_swap_does_not_reopen(self, tmp_path: Path):
+        """On Unix (temp_db_path=None), on_swap should only be called once."""
+        repo = _make_test_repo(tmp_path)
+        cfg = _make_config(str(repo))
+        db_path = str(tmp_path / "prod_db")
+
+        # Unix SwapResult: temp_db_path is None
+        mock_unix_swap = SwapResult(
+            index=MagicMock(),
+            retriever=MagicMock(),
+        )
+
+        on_swap = AsyncMock()
+        mock_chunk = MagicMock()
+        mock_chunk.file_path = str(repo / "intro.md")
+
+        with (
+            patch("doc_qa.indexing.job.scan_files", return_value=[repo / "intro.md"]),
+            patch("doc_qa.indexing.job._parse_and_chunk", return_value={
+                "chunks": [mock_chunk], "sections": 1, "skipped": False, "file_hash": "abc",
+            }),
+            patch("doc_qa.indexing.job._bulk_add_chunks", return_value=1),
+            patch("doc_qa.indexing.job.DocIndex") as MockIndex,
+            patch("doc_qa.indexing.job._atomic_swap", return_value=mock_unix_swap),
+            patch("doc_qa.indexing.job._cleanup_temp"),
+        ):
+            MockIndex.return_value.rebuild_fts_index = MagicMock()
+
+            job = IndexingJob(repo_path=str(repo), config=cfg, db_path=db_path)
+            await job.run(on_swap)
+
+        assert job.state == IndexingState.done
+        # on_swap called only once on Unix — no re-open needed
+        on_swap.assert_called_once_with(mock_unix_swap)
+
+    @pytest.mark.asyncio
+    async def test_windows_swap_handles_reopen_failure(self, tmp_path: Path):
+        """If _reopen_from_prod returns None, on_swap should only be called once."""
+        repo = _make_test_repo(tmp_path)
+        cfg = _make_config(str(repo))
+        db_path = str(tmp_path / "prod_db")
+
+        mock_windows_swap = SwapResult(
+            index=MagicMock(),
+            retriever=MagicMock(),
+            temp_db_path=str(tmp_path / "temp_building"),
+            prod_db_path=db_path,
+        )
+
+        on_swap = AsyncMock()
+        mock_chunk = MagicMock()
+        mock_chunk.file_path = str(repo / "intro.md")
+
+        with (
+            patch("doc_qa.indexing.job.scan_files", return_value=[repo / "intro.md"]),
+            patch("doc_qa.indexing.job._parse_and_chunk", return_value={
+                "chunks": [mock_chunk], "sections": 1, "skipped": False, "file_hash": "abc",
+            }),
+            patch("doc_qa.indexing.job._bulk_add_chunks", return_value=1),
+            patch("doc_qa.indexing.job.DocIndex") as MockIndex,
+            patch("doc_qa.indexing.job._atomic_swap", return_value=mock_windows_swap),
+            patch("doc_qa.indexing.job._finalize_swap_directories"),
+            patch("doc_qa.indexing.job._reopen_from_prod", return_value=None),
+            patch("doc_qa.indexing.job._cleanup_temp"),
+        ):
+            MockIndex.return_value.rebuild_fts_index = MagicMock()
+
+            job = IndexingJob(repo_path=str(repo), config=cfg, db_path=db_path)
+            await job.run(on_swap)
+
+        assert job.state == IndexingState.done
+        # on_swap called only once — reopen failed, so we don't call again
+        on_swap.assert_called_once_with(mock_windows_swap)

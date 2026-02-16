@@ -438,9 +438,18 @@ class IndexingJob:
             # Notify server to hot-swap references
             await on_swap(swap_result)
 
-            # Finalize directory renames (Windows deferred cleanup)
+            # Windows deferred cleanup: rename temp → prod, then re-open
+            # from prod path so the retriever isn't pointing at the
+            # now-renamed temp directory.
             if swap_result.temp_db_path is not None:
                 await loop.run_in_executor(None, _finalize_swap_directories, swap_result)
+                # Re-open from production path so the retriever isn't pointing at
+                # the now-renamed temp directory
+                reopened = await loop.run_in_executor(
+                    None, _reopen_from_prod, swap_result.prod_db_path, self.config.indexing.embedding_model,
+                )
+                if reopened is not None:
+                    await on_swap(reopened)
 
             # ── Phase 5: Done ────────────────────────────────
             elapsed = round(time.time() - self._start_time, 1)
@@ -640,6 +649,31 @@ def _atomic_swap(
     return SwapResult(index=new_index, retriever=new_retriever)
 
 
+def _reopen_from_prod(prod_db_path: str, embedding_model: str) -> SwapResult | None:
+    """Re-open the index from the production path after Windows finalization.
+
+    After ``_finalize_swap_directories`` renames temp → prod, the retriever
+    still holds file handles to the old temp path.  This function opens a
+    fresh DocIndex + HybridRetriever from the (now-populated) production
+    directory so subsequent queries hit valid Lance manifests.
+    """
+    prod = Path(prod_db_path)
+    if not prod.exists():
+        logger.warning("Production path %s does not exist after finalization", prod_db_path)
+        return None
+    try:
+        new_index = DocIndex(db_path=prod_db_path, embedding_model=embedding_model)
+        new_retriever = HybridRetriever(
+            table=new_index._table,
+            embedding_model=embedding_model,
+        )
+        logger.info("Re-opened index from production path: %s", prod_db_path)
+        return SwapResult(index=new_index, retriever=new_retriever)
+    except Exception as exc:
+        logger.warning("Failed to re-open index from production path %s: %s", prod_db_path, exc)
+        return None
+
+
 def _finalize_swap_directories(swap_result: SwapResult) -> None:
     """Phase 2 (Windows only): rename directories after old references are released.
 
@@ -683,7 +717,9 @@ def _finalize_swap_directories(swap_result: SwapResult) -> None:
             else:
                 logger.warning(
                     "Could not finalize swap directories after %d attempts. "
-                    "Index is serving from temp path: %s",
+                    "Index is serving from temp path: %s. "
+                    "Queries may fail with corrupt Lance manifest errors. "
+                    "Try closing other programs that access the index and restart.",
                     max_attempts,
                     swap_result.temp_db_path,
                 )
