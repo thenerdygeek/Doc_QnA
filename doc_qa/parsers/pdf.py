@@ -46,6 +46,43 @@ class PDFParser(Parser):
             logger.warning("Failed to parse PDF %s", file_path.name, exc_info=True)
             return []
 
+    @staticmethod
+    def _extract_tables_from_page(page: object) -> list[str]:
+        """Extract tables from a pdfplumber page and format as markdown.
+
+        Uses ``page.extract_tables()`` (pdfplumber built-in) and converts
+        each table to a markdown pipe table.
+
+        Args:
+            page: A pdfplumber page object.
+
+        Returns:
+            List of markdown-formatted table strings.
+        """
+        tables: list[str] = []
+        try:
+            raw_tables = page.extract_tables()  # type: ignore[attr-defined]
+        except Exception:
+            return []
+
+        if not raw_tables:
+            return []
+
+        for raw_table in raw_tables:
+            if not raw_table or not raw_table[0]:
+                continue
+            md_rows: list[str] = []
+            for row_idx, row in enumerate(raw_table):
+                # Replace None cells with empty string
+                cells = [(cell or "").replace("\n", " ").strip() for cell in row]
+                md_rows.append("| " + " | ".join(cells) + " |")
+                # Add header separator after first row
+                if row_idx == 0:
+                    md_rows.append("| " + " | ".join("---" for _ in cells) + " |")
+            tables.append("\n".join(md_rows))
+
+        return tables
+
     def _extract_sections(self, file_path: Path) -> list[ParsedSection]:
         import pdfplumber
 
@@ -60,7 +97,12 @@ class PDFParser(Parser):
             page_texts: list[str] = []
             for page in pdf.pages:
                 text = page.extract_text() or ""
-                page_texts.append(text.strip())
+                # Extract tables from the page and append as markdown
+                md_tables = self._extract_tables_from_page(page)
+                page_text = text.strip()
+                if md_tables:
+                    page_text = page_text + "\n\n" + "\n\n".join(md_tables)
+                page_texts.append(page_text)
 
             full_text = "\n\n".join(page_texts)
 
@@ -85,6 +127,7 @@ class PDFParser(Parser):
                         level=1,
                         file_path=fp,
                         file_type="pdf",
+                        metadata=self._make_metadata(text),
                     )
                 )
 
@@ -141,6 +184,7 @@ class PDFParser(Parser):
                                 level=1,
                                 file_path=file_path,
                                 file_type="pdf",
+                                metadata=self._make_metadata(content),
                             ))
                     current_title = text
                     current_lines = []
@@ -157,6 +201,7 @@ class PDFParser(Parser):
                     level=1,
                     file_path=file_path,
                     file_type="pdf",
+                    metadata=self._make_metadata(content),
                 ))
 
         if len(sections) >= 2:
@@ -186,6 +231,7 @@ class PDFParser(Parser):
                                 level=1,
                                 file_path=file_path,
                                 file_type="pdf",
+                                metadata=self._make_metadata(content),
                             )
                         )
                 current_title = stripped
@@ -204,6 +250,7 @@ class PDFParser(Parser):
                         level=1,
                         file_path=file_path,
                         file_type="pdf",
+                        metadata=self._make_metadata(content),
                     )
                 )
 
@@ -211,6 +258,21 @@ class PDFParser(Parser):
         if len(sections) >= 2:
             return sections
         return []
+
+    @staticmethod
+    def _make_metadata(content: str) -> dict[str, str]:
+        """Build content-type metadata for a PDF section."""
+        has_table = any(
+            line.strip().startswith("|") and line.strip().endswith("|")
+            for line in content.split("\n")
+            if line.strip()
+        )
+        ct = "table" if has_table else "prose"
+        return {
+            "content_type": ct,
+            "has_table": str(has_table).lower(),
+            "has_code": "false",
+        }
 
     @staticmethod
     def _is_heading(line: str) -> bool:

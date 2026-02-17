@@ -183,6 +183,15 @@ def cmd_query(args: argparse.Namespace) -> None:
         max_chunks_per_file=config.retrieval.max_chunks_per_file,
         rerank=config.retrieval.rerank,
         max_history_turns=config.retrieval.max_history_turns,
+        reranker_model=config.retrieval.reranker_model,
+        context_reorder=config.retrieval.context_reorder,
+        enable_hyde=config.retrieval.enable_hyde,
+        reranker_min_score=config.retrieval.reranker_min_score,
+        enable_query_expansion=config.retrieval.enable_query_expansion,
+        max_expansion_queries=config.retrieval.max_expansion_queries,
+        hyde_weight=config.retrieval.hyde_weight,
+        section_level_boost=config.retrieval.section_level_boost,
+        recency_boost=config.retrieval.recency_boost,
     )
 
     async def _run_query() -> None:
@@ -207,8 +216,14 @@ def cmd_query(args: argparse.Namespace) -> None:
 
 
 def cmd_eval(args: argparse.Namespace) -> None:
-    """Run retrieval evaluation."""
-    from doc_qa.eval.evaluator import evaluate, format_report, load_test_cases
+    """Run retrieval evaluation, optionally comparing two configurations."""
+    from doc_qa.eval.evaluator import (
+        compare_evaluations,
+        evaluate,
+        format_comparison,
+        format_report,
+        load_test_cases,
+    )
     from doc_qa.indexing.indexer import DocIndex
     from doc_qa.retrieval.retriever import HybridRetriever
 
@@ -235,15 +250,38 @@ def cmd_eval(args: argparse.Namespace) -> None:
         print("Error: Index is empty. Run 'doc-qa index' first.", file=sys.stderr)
         sys.exit(1)
 
-    # Set up retriever
+    k = config.retrieval.top_k
+
+    # A/B comparison mode
+    if args.compare:
+        compare_config = load_config(Path(args.compare))
+
+        retriever_a = HybridRetriever(
+            table=index._table,
+            embedding_model=config.indexing.embedding_model,
+            mode=config.retrieval.search_mode,
+        )
+        retriever_b = HybridRetriever(
+            table=index._table,
+            embedding_model=compare_config.indexing.embedding_model,
+            mode=compare_config.retrieval.search_mode,
+        )
+
+        result = compare_evaluations(cases, retriever_a, retriever_b, k=k)
+        print(format_comparison(result, k=k))
+
+        # Exit code: fail if config B is worse on precision
+        if result.precision_delta < 0:
+            sys.exit(1)
+        return
+
+    # Standard single-config evaluation
     retriever = HybridRetriever(
         table=index._table,
         embedding_model=config.indexing.embedding_model,
         mode=config.retrieval.search_mode,
     )
 
-    # Run evaluation
-    k = config.retrieval.top_k
     summary = evaluate(cases, retriever, k=k)
 
     # Print report
@@ -332,16 +370,17 @@ def _ensure_embedding_model(model_name: str) -> None:
             print(f"  Standard: {first_err}", file=sys.stderr)
             print(f"  GCS:      {gcs_err}", file=sys.stderr)
             print(
-                "\nThe embedding model (~90 MB) must be downloaded once.\n"
+                "The embedding model (~350 MB) must be downloaded once.\n"
                 "\n"
-                "Option 1 — Download in your browser, then install:\n"
-                "  1. Open this URL in your browser:\n"
-                "     https://storage.googleapis.com/qdrant-fastembed/sentence-transformers-all-MiniLM-L6-v2.tar.gz\n"
-                "  2. Run:\n"
-                "     doc-qa install-model /path/to/sentence-transformers-all-MiniLM-L6-v2.tar.gz\n"
+                "The nomic-embed-text-v1.5 model is downloaded automatically by FastEmbed.\n"
+                "If automatic download fails, ensure you have internet access and try:\n"
+                "  pip install fastembed\n"
+                "  python -c \"from fastembed import TextEmbedding; TextEmbedding('nomic-ai/nomic-embed-text-v1.5')\"\n"
                 "\n"
-                "Option 2 — Copy from another machine:\n"
-                "  Copy the data/models/ folder from a machine that already has the model.\n"
+                "For the legacy all-MiniLM-L6-v2 model, you can still use:\n"
+                "  doc-qa install-model /path/to/sentence-transformers-all-MiniLM-L6-v2.tar.gz\n"
+                "\n"
+                "Or copy the data/models/ folder from a machine that already has the model.\n"
                 f"\nCache directory: {cache_dir}",
                 file=sys.stderr,
             )
@@ -390,18 +429,16 @@ def cmd_download_model(args: argparse.Namespace) -> None:
         print(
             "\nAutomatic download failed. Manual steps:\n"
             "\n"
-            "Option 1 — Download in your browser, then install:\n"
-            "  1. Open this URL in your browser:\n"
-            "     https://storage.googleapis.com/qdrant-fastembed/sentence-transformers-all-MiniLM-L6-v2.tar.gz\n"
-            "  2. Run:\n"
-            "     doc-qa install-model /path/to/sentence-transformers-all-MiniLM-L6-v2.tar.gz\n"
+            "The nomic-embed-text-v1.5 model is downloaded automatically by FastEmbed.\n"
+            "If automatic download fails, ensure you have internet access and try:\n"
+            "  pip install fastembed\n"
+            "  python -c \"from fastembed import TextEmbedding; TextEmbedding('nomic-ai/nomic-embed-text-v1.5')\"\n"
             "\n"
-            "Option 2 — Behind a corporate proxy:\n"
+            "Behind a corporate proxy:\n"
             "  set HTTPS_PROXY=http://your-proxy:8080\n"
             "  doc-qa download-model\n"
             "\n"
-            "Option 3 — Copy from another machine:\n"
-            "  Copy the data/models/ folder from a machine that already has the model.\n"
+            "Or copy the data/models/ folder from a machine that already has the model.\n"
             f"\nCache directory: {cache_dir}",
             file=sys.stderr,
         )
@@ -418,6 +455,7 @@ def cmd_install_model(args: argparse.Namespace) -> None:
     import tarfile
 
     from doc_qa.indexing.embedder import (
+        _MODEL_GCS_INFO,
         _cleanup_corrupt_hf_cache,
         _get_model,
         embed_texts,
@@ -457,7 +495,11 @@ def cmd_install_model(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     # 4. Verify model.onnx exists
-    model_dir = Path(cache_dir) / "fast-all-MiniLM-L6-v2"
+    info = _MODEL_GCS_INFO.get(model_name)
+    if info:
+        model_dir = Path(cache_dir) / info["dir_name"]
+    else:
+        model_dir = Path(cache_dir) / "fast-all-MiniLM-L6-v2"  # legacy fallback
     onnx_file = model_dir / "model.onnx"
     if not onnx_file.is_file():
         print(f"\nError: Expected file not found: {onnx_file}", file=sys.stderr)
@@ -568,6 +610,12 @@ def main() -> None:
     p_eval = sub.add_parser("eval", help="Run retrieval evaluation")
     p_eval.add_argument("--test-cases", help="Path to test_cases.json", required=True)
     p_eval.add_argument("--repo", help="Path to documentation repository", required=True)
+    p_eval.add_argument(
+        "--compare",
+        metavar="CONFIG_B",
+        help="Path to a second config.yaml for A/B comparison (current config = A, this = B)",
+        default=None,
+    )
     p_eval.set_defaults(func=cmd_eval)
 
     # db command

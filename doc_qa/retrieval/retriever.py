@@ -30,6 +30,7 @@ class RetrievedChunk:
     chunk_index: int
     vector: list[float] | None = None
     doc_date: float = 0.0  # Unix timestamp for version-aware dedup
+    content_type: str = "prose"  # "prose", "code", "table", or "mixed"
 
 
 class HybridRetriever:
@@ -44,12 +45,16 @@ class HybridRetriever:
     def __init__(
         self,
         table: Any,
-        embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2",
+        embedding_model: str = "nomic-ai/nomic-embed-text-v1.5",
         mode: str = "hybrid",
+        section_level_boost: float = 0.0,
+        recency_boost: float = 0.0,
     ) -> None:
         self._table = table
         self._embedding_model = embedding_model
         self._mode = mode
+        self._section_level_boost = section_level_boost
+        self._recency_boost = recency_boost
 
     def search(
         self,
@@ -76,6 +81,27 @@ class HybridRetriever:
         # hybrid
         return self._hybrid_search(query, top_k, min_score)
 
+    def search_by_vector(
+        self,
+        query_vec: np.ndarray,
+        top_k: int = 20,
+        min_score: float = 0.0,
+    ) -> list[RetrievedChunk]:
+        """Vector-only search using a pre-computed embedding.
+
+        Used by HyDE (Hypothetical Document Embeddings) which provides
+        its own query vector derived from a generated hypothesis.
+        """
+        if top_k <= 0:
+            return []
+        results = (
+            self._table.search(query_vec.tolist())
+            .metric("cosine")
+            .limit(top_k)
+            .to_arrow()
+        )
+        return self._arrow_to_chunks(results, min_score)
+
     def _vector_search(
         self,
         query: str,
@@ -92,7 +118,10 @@ class HybridRetriever:
             .to_arrow()
         )
 
-        return self._arrow_to_chunks(results, min_score)
+        chunks = self._arrow_to_chunks(results, min_score)
+        if self._section_level_boost or self._recency_boost:
+            self._apply_metadata_boost(chunks, self._section_level_boost, self._recency_boost)
+        return chunks
 
     def _fts_search(
         self,
@@ -107,7 +136,10 @@ class HybridRetriever:
                 .limit(top_k)
                 .to_arrow()
             )
-            return self._arrow_to_chunks(results, min_score)
+            chunks = self._arrow_to_chunks(results, min_score)
+            if self._section_level_boost or self._recency_boost:
+                self._apply_metadata_boost(chunks, self._section_level_boost, self._recency_boost)
+            return chunks
         except Exception:
             logger.warning("FTS search failed — falling back to vector.", exc_info=True)
             return self._vector_search(query, top_k, min_score)
@@ -126,7 +158,13 @@ class HybridRetriever:
                 .limit(top_k)
                 .to_arrow()
             )
-            return self._arrow_to_chunks(results, min_score)
+            chunks = self._arrow_to_chunks(results, min_score)
+            # Normalize native hybrid scores to [0, 1]
+            from doc_qa.retrieval.score_normalizer import normalize_min_max
+            chunks = normalize_min_max(chunks)
+            if self._section_level_boost or self._recency_boost:
+                self._apply_metadata_boost(chunks, self._section_level_boost, self._recency_boost)
+            return chunks
         except Exception as e:
             logger.debug("Native hybrid search unavailable (%s) — using manual RRF.", e)
             query_vec = embed_query(query, model_name=self._embedding_model)
@@ -178,8 +216,7 @@ class HybridRetriever:
             if chunk.chunk_id not in chunk_map:
                 chunk_map[chunk.chunk_id] = chunk
 
-        # Sort by RRF score (don't apply min_score — RRF scores are not comparable
-        # to cosine similarity scores; they are rank-based, typically ~0.01-0.03)
+        # Sort by RRF score
         sorted_ids = sorted(scores, key=lambda cid: scores[cid], reverse=True)
 
         merged: list[RetrievedChunk] = []
@@ -188,7 +225,64 @@ class HybridRetriever:
             c.score = scores[cid]
             merged.append(c)
 
+        # Normalize RRF scores to [0, 1] — raw RRF values (~0.01-0.03) are
+        # not on the same scale as cosine similarity or cross-encoder scores.
+        from doc_qa.retrieval.score_normalizer import normalize_min_max
+        normalize_min_max(merged)
+
+        if self._section_level_boost or self._recency_boost:
+            self._apply_metadata_boost(merged, self._section_level_boost, self._recency_boost)
+
         return merged
+
+    @staticmethod
+    def _apply_metadata_boost(
+        chunks: list[RetrievedChunk],
+        section_level_boost: float = 0.05,
+        recency_boost: float = 0.03,
+    ) -> list[RetrievedChunk]:
+        """Boost scores based on section level and document recency.
+
+        Args:
+            chunks: Chunks with scores to boost (modified in-place).
+            section_level_boost: Max boost for top-level (1-2) sections.
+                Level 3 gets half.
+            recency_boost: Max boost for most recent doc. Decays linearly
+                over 365 days.
+
+        Returns:
+            The same list, re-sorted by boosted score descending, scores
+            clamped to [0, 1].
+        """
+        if not chunks:
+            return chunks
+
+        # ── Section-level boost ──────────────────────────────────
+        if section_level_boost > 0:
+            for c in chunks:
+                if c.section_level <= 2:
+                    c.score += section_level_boost
+                elif c.section_level == 3:
+                    c.score += section_level_boost / 2
+
+        # ── Recency boost (linear decay over 365 days) ───────────
+        if recency_boost > 0:
+            dated = [c.doc_date for c in chunks if c.doc_date > 0]
+            if dated:
+                max_date = max(dated)
+                decay_window = 365.0 * 86400.0  # 365 days in seconds
+                for c in chunks:
+                    if c.doc_date > 0:
+                        age = max_date - c.doc_date
+                        fraction = max(0.0, 1.0 - age / decay_window)
+                        c.score += recency_boost * fraction
+
+        # ── Clamp to [0, 1] and re-sort ──────────────────────────
+        for c in chunks:
+            c.score = max(0.0, min(1.0, c.score))
+
+        chunks.sort(key=lambda c: c.score, reverse=True)
+        return chunks
 
     @staticmethod
     def _arrow_to_chunks(
@@ -231,6 +325,7 @@ class HybridRetriever:
                     chunk_index=int(arrow_table.column("chunk_index")[i].as_py()),
                     vector=arrow_table.column("vector")[i].as_py() if "vector" in col_names else None,
                     doc_date=float(arrow_table.column("doc_date")[i].as_py()) if "doc_date" in col_names else 0.0,
+                    content_type=arrow_table.column("content_type")[i].as_py() if "content_type" in col_names else "prose",
                 )
             )
 

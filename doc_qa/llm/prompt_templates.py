@@ -312,3 +312,49 @@ PROCEDURAL_GENERATION = """\
 Present the answer as numbered steps. Each step should be actionable.
 Include any prerequisite steps at the beginning.
 Include expected outcomes or verification steps where relevant."""
+
+# ── Query Expansion ─────────────────────────────────────────────
+
+QUERY_EXPANSION = """\
+Generate {n_variants} alternative phrasings of this documentation question. \
+Each variant should use different keywords and phrasing while preserving the \
+original intent. This helps find documents that use different terminology.
+
+Original question: "{question}"
+
+Return ONLY the alternative phrasings, one per line, numbered:
+1. <first variant>
+2. <second variant>
+3. <third variant>"""
+
+# ── HyDE: Hypothetical Document Generation ──────────────────────
+
+HYDE_GENERATION = """\
+Given the following question about a software project's documentation, \
+write a short paragraph (3-5 sentences) that would be a plausible excerpt \
+from the documentation that answers this question. Write as if you are the \
+documentation itself, not as an assistant. Do not hedge or say "I don't know". \
+Just write a direct, factual-sounding paragraph.
+
+Question: {question}
+
+Documentation excerpt:"""
+
+# ── Answer Refinement (post-verification) ────────────────────────
+
+ANSWER_REFINEMENT = """\
+The following answer to a documentation question was flagged during \
+verification. Rewrite the answer to fix the identified issues while \
+keeping all accurate information intact. Base your corrections ONLY on \
+the provided source context.
+
+Original question: "{question}"
+
+Original answer:
+{original_answer}
+
+Issues found: {issues}
+Suggested fix: {suggested_fix}
+
+Rewrite the answer to address these issues. Keep it concise and \
+well-structured. Cite sources using [Source: filename] format."""

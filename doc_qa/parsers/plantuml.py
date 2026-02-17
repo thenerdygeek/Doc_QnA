@@ -47,7 +47,7 @@ _COMPONENT_RE = re.compile(
 
 # Relationship: A --> B : label
 _RELATIONSHIP_RE = re.compile(
-    r"^\s*(\S+)\s*([-.<>|*o#+]+)\s*(\S+)\s*(?::\s*(.+))?$"
+    r"^\s*(\S+)\s*([-.<>|*o#+]{2,})\s*(\S+)\s*(?::\s*(.+))?$"
 )
 
 
@@ -163,6 +163,7 @@ class PlantUMLParser(Parser):
 
         # Build natural language summary
         summary_parts: list[str] = []
+        has_extracted = bool(participants or messages or components or relationships or notes)
 
         if is_sequence:
             summary_parts.append(f"Sequence diagram: {title}")
@@ -200,6 +201,23 @@ class PlantUMLParser(Parser):
             summary_parts.append("Notes:")
             for note in notes:
                 summary_parts.append(f"  - {note}")
+
+        # Fallback: if regex extraction captured nothing meaningful
+        # (e.g. activity/state/timing diagrams), include the raw source
+        # so the LLM still has content to work with.
+        if not has_extracted:
+            # Strip @startuml/@enduml wrappers and comments for cleaner text
+            raw_lines = [
+                ln.rstrip()
+                for ln in lines
+                if ln.strip()
+                and not ln.strip().startswith("@")
+                and not ln.strip().startswith("'")
+            ]
+            if raw_lines:
+                summary_parts.append("Diagram source:")
+                summary_parts.extend(raw_lines)
+                logger.debug("Regex extraction empty for %s — using raw source fallback", file_path.name)
 
         content = "\n".join(summary_parts)
 

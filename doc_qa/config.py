@@ -30,7 +30,8 @@ class IndexingConfig:
     chunk_size: int = 512
     chunk_overlap: int = 50
     min_chunk_size: int = 100
-    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_model: str = "nomic-ai/nomic-embed-text-v1.5"
+    chunking_strategy: str = "paragraph"  # "paragraph" | "semantic"
 
 
 @dataclass
@@ -43,6 +44,15 @@ class RetrievalConfig:
     rerank: bool = True
     max_query_length: int = 2000
     max_history_turns: int = 10
+    context_reorder: bool = True
+    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    reranker_min_score: float = 0.1
+    enable_hyde: bool = False
+    hyde_weight: float = 0.7
+    section_level_boost: float = 0.05
+    recency_boost: float = 0.03
+    enable_query_expansion: bool = False
+    max_expansion_queries: int = 3
 
 
 @dataclass
@@ -95,8 +105,11 @@ class GenerationConfig:
 class VerificationConfig:
     enable_verification: bool = True
     enable_crag: bool = True
-    confidence_threshold: float = 0.4
+    confidence_threshold: float = 0.6
+    caveat_threshold: float = 0.4
     max_crag_rewrites: int = 2
+    crag_rewrite_threshold: float = 0.5
+    crag_retain_partial: bool = True
     abstain_on_low_confidence: bool = True
 
 

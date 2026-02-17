@@ -136,6 +136,26 @@ class MarkdownParser(Parser):
         def _flush() -> None:
             content = "\n\n".join(b for b in current_blocks if b.strip())
             if current_title or content:
+                # Detect tables (lines with |) and code (``` blocks) for metadata
+                has_table = any(
+                    line.strip().startswith("|") and line.strip().endswith("|")
+                    for line in content.split("\n")
+                    if line.strip()
+                )
+                has_code = "```" in content
+                if has_table and has_code:
+                    ct = "mixed"
+                elif has_table:
+                    ct = "table"
+                elif has_code:
+                    ct = "code"
+                else:
+                    ct = "prose"
+                meta = {
+                    "content_type": ct,
+                    "has_table": str(has_table).lower(),
+                    "has_code": str(has_code).lower(),
+                }
                 sections.append(
                     ParsedSection(
                         title=current_title,
@@ -143,6 +163,7 @@ class MarkdownParser(Parser):
                         level=current_level,
                         file_path=str(file_path),
                         file_type="md",
+                        metadata=meta,
                     )
                 )
 

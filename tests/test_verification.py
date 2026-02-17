@@ -12,8 +12,11 @@ from doc_qa.verification.grader import (
     grade_documents,
 )
 from doc_qa.verification.mermaid_validator import MermaidValidator
+from doc_qa.config import VerificationConfig
+from doc_qa.intelligence.confidence import ConfidenceAssessment, compute_confidence
 from doc_qa.verification.verifier import (
     VerificationResult,
+    _parse_confidence,
     _parse_verification_response,
     verify_answer,
 )
@@ -76,6 +79,149 @@ class TestVerificationParsing:
         resp = "Verdict: PASS\nConfidence: abc\nIssues: none"
         result = _parse_verification_response(resp)
         assert result.confidence == 0.5
+
+
+class TestVerificationParsingExpanded:
+    """Tests for expanded verdict synonyms and separator formats."""
+
+    def test_passed_synonym(self):
+        resp = "Verdict: PASSED\nConfidence: 0.9\nIssues: none"
+        result = _parse_verification_response(resp)
+        assert result.passed is True
+
+    def test_yes_synonym(self):
+        resp = "Verdict: YES\nConfidence: 0.9\nIssues: none"
+        result = _parse_verification_response(resp)
+        assert result.passed is True
+
+    def test_correct_synonym(self):
+        resp = "Verdict: CORRECT\nConfidence: 0.85\nIssues: none"
+        result = _parse_verification_response(resp)
+        assert result.passed is True
+
+    def test_failed_synonym(self):
+        resp = "Verdict: FAILED\nConfidence: 0.2\nIssues: inaccurate"
+        result = _parse_verification_response(resp)
+        assert result.passed is False
+
+    def test_no_synonym(self):
+        resp = "Verdict: NO\nConfidence: 0.3\nIssues: hallucination"
+        result = _parse_verification_response(resp)
+        assert result.passed is False
+
+    def test_incorrect_synonym(self):
+        resp = "Verdict: INCORRECT\nConfidence: 0.1\nIssues: wrong data"
+        result = _parse_verification_response(resp)
+        assert result.passed is False
+
+    def test_dash_separator(self):
+        resp = "Verdict - PASS\nConfidence - 0.9\nIssues - none"
+        result = _parse_verification_response(resp)
+        assert result.passed is True
+        assert result.confidence == pytest.approx(0.9)
+
+    def test_em_dash_separator(self):
+        resp = "Verdict— FAIL\nConfidence— 0.3\nIssues— bad claim"
+        result = _parse_verification_response(resp)
+        assert result.passed is False
+
+
+class TestConfidenceParsing:
+    """Tests for various confidence format parsing."""
+
+    def test_decimal(self):
+        assert _parse_confidence("0.85") == pytest.approx(0.85)
+
+    def test_fraction_8_of_10(self):
+        assert _parse_confidence("8/10") == pytest.approx(0.8)
+
+    def test_fraction_7_of_10(self):
+        assert _parse_confidence("7/10") == pytest.approx(0.7)
+
+    def test_percentage(self):
+        assert _parse_confidence("85%") == pytest.approx(0.85)
+
+    def test_integer_scale_10(self):
+        # 8 interpreted as 8/10
+        assert _parse_confidence("8") == pytest.approx(0.8)
+
+    def test_zero(self):
+        assert _parse_confidence("0") == pytest.approx(0.0)
+
+    def test_one(self):
+        assert _parse_confidence("1.0") == pytest.approx(1.0)
+
+    def test_invalid_returns_default(self):
+        assert _parse_confidence("abc") == pytest.approx(0.5)
+
+
+class TestJsonFallbackParsing:
+    """Tests for JSON-format verification parsing."""
+
+    def test_json_pass(self):
+        resp = '{"verdict": "PASS", "confidence": 0.9, "issues": [], "suggested_fix": "none"}'
+        result = _parse_verification_response(resp)
+        assert result.passed is True
+        assert result.confidence == pytest.approx(0.9)
+        assert result.issues == []
+
+    def test_json_fail_with_issues(self):
+        resp = '{"verdict": "FAIL", "confidence": 0.3, "issues": ["bad claim", "missing source"], "suggested_fix": "remove claim"}'
+        result = _parse_verification_response(resp)
+        assert result.passed is False
+        assert len(result.issues) == 2
+        assert result.suggested_fix == "remove claim"
+
+    def test_json_in_code_fence(self):
+        resp = '```json\n{"verdict": "PASS", "confidence": 0.85, "issues": "none"}\n```'
+        result = _parse_verification_response(resp)
+        assert result.passed is True
+        assert result.confidence == pytest.approx(0.85)
+
+    def test_json_with_passed_key(self):
+        resp = '{"passed": true, "confidence": 0.9, "issues": []}'
+        result = _parse_verification_response(resp)
+        assert result.passed is True
+
+    def test_invalid_json_falls_back_to_regex(self):
+        resp = "{invalid json\nVerdict: PASS\nConfidence: 0.9\nIssues: none"
+        result = _parse_verification_response(resp)
+        assert result.passed is True
+        assert result.confidence == pytest.approx(0.9)
+
+
+class TestCaveatMode:
+    """Tests for three-zone confidence scoring (normal / caveat / abstain)."""
+
+    def _config(self, threshold=0.6, caveat=0.4, abstain=True):
+        return VerificationConfig(
+            confidence_threshold=threshold,
+            caveat_threshold=caveat,
+            abstain_on_low_confidence=abstain,
+        )
+
+    def test_high_confidence_no_caveat(self):
+        verification = VerificationResult(passed=True, confidence=0.95)
+        assessment = compute_confidence([0.9, 0.8, 0.7], verification, self._config())
+        assert not assessment.should_abstain
+        assert not assessment.caveat_added
+
+    def test_moderate_confidence_caveat(self):
+        verification = VerificationResult(passed=True, confidence=0.5)
+        assessment = compute_confidence([0.3, 0.2], verification, self._config())
+        assert not assessment.should_abstain
+        assert assessment.caveat_added
+
+    def test_low_confidence_abstain(self):
+        verification = VerificationResult(passed=False, confidence=0.2)
+        assessment = compute_confidence([0.1], verification, self._config())
+        assert assessment.should_abstain
+        assert not assessment.caveat_added
+
+    def test_abstain_disabled_no_abstain(self):
+        verification = VerificationResult(passed=False, confidence=0.1)
+        assessment = compute_confidence([0.1], verification, self._config(abstain=False))
+        assert not assessment.should_abstain
 
 
 class TestVerifyAnswer:

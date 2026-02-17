@@ -1,46 +1,63 @@
-"""Reranker — re-scores chunks using embedding similarity.
-
-Uses bi-encoder cosine similarity between query and chunk embeddings
-for a second-pass scoring refinement. This is lighter than a true
-cross-encoder but still improves result quality by re-scoring all
-candidates with a unified metric.
-"""
-
+"""Cross-encoder reranker for second-pass scoring."""
 from __future__ import annotations
 
 import logging
+import os
+import threading
+from pathlib import Path
 from typing import TYPE_CHECKING
-
-import numpy as np
-
-from doc_qa.indexing.embedder import embed_query, embed_texts
 
 if TYPE_CHECKING:
     from doc_qa.retrieval.retriever import RetrievedChunk
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+_ce_model = None
+_ce_model_name = ""
+_ce_lock = threading.Lock()
+
+
+def _get_cross_encoder(model_name: str):
+    """Lazy-load cross-encoder model (singleton, thread-safe)."""
+    global _ce_model, _ce_model_name
+    if _ce_model is not None and _ce_model_name == model_name:
+        return _ce_model
+    with _ce_lock:
+        if _ce_model is not None and _ce_model_name == model_name:
+            return _ce_model
+        from sentence_transformers import CrossEncoder
+
+        cache_dir = os.environ.get(
+            "FASTEMBED_CACHE_PATH",
+            str(Path(__file__).resolve().parent.parent.parent / "data" / "models"),
+        )
+        logger.info("Loading cross-encoder: %s", model_name)
+        _ce_model = CrossEncoder(model_name, cache_folder=cache_dir)
+        _ce_model_name = model_name
+        return _ce_model
+
 
 def rerank(
     query: str,
     chunks: list[RetrievedChunk],
-    model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
+    model_name: str = _DEFAULT_MODEL,
     top_k: int | None = None,
 ) -> list[RetrievedChunk]:
-    """Rerank chunks by computing fresh cosine similarity scores.
+    """Rerank chunks using a cross-encoder model.
 
-    The retriever's initial scores may mix distance metrics (BM25 vs cosine).
-    This reranker normalizes by computing cosine similarity for all chunks
-    against the query embedding in a single batch.
+    Cross-encoders jointly attend to query+document pairs, providing
+    much more accurate relevance scores than bi-encoder cosine similarity
+    (typically 20-35% improvement in ranking quality).
 
     Args:
         query: User query string.
         chunks: Candidate chunks from the retriever.
-        model_name: Embedding model name.
+        model_name: Cross-encoder model name.
         top_k: Max results to return (None = return all, reranked).
 
     Returns:
-        Chunks reranked by cosine similarity, highest first.
+        Chunks reranked by cross-encoder score, highest first.
     """
     if not chunks:
         return []
@@ -48,22 +65,10 @@ def rerank(
     if len(chunks) == 1:
         return chunks
 
-    # Use cached vectors if available (avoid re-embedding)
-    if all(c.vector is not None for c in chunks):
-        query_vec = embed_query(query, model_name=model_name)
-        chunk_vecs = [np.array(c.vector, dtype=np.float32) for c in chunks]
-    else:
-        query_vec = embed_query(query, model_name=model_name)
-        chunk_vecs = embed_texts([c.text for c in chunks], model_name=model_name)
+    ce = _get_cross_encoder(model_name)
+    pairs = [[query, c.text] for c in chunks]
+    scores = ce.predict(pairs).tolist()
 
-    # Compute cosine similarity
-    query_norm = query_vec / (np.linalg.norm(query_vec) + 1e-10)
-    scores: list[float] = []
-    for vec in chunk_vecs:
-        vec_norm = vec / (np.linalg.norm(vec) + 1e-10)
-        scores.append(float(np.dot(query_norm, vec_norm)))
-
-    # Pair scores with chunks and sort
     scored = sorted(zip(scores, chunks), key=lambda x: x[0], reverse=True)
 
     result: list[RetrievedChunk] = []
@@ -73,6 +78,12 @@ def rerank(
 
     if top_k is not None:
         result = result[:top_k]
+
+    # Normalize cross-encoder logits to (0, 1) via sigmoid.
+    # Raw scores are unbounded (typically -3 to +10); downstream components
+    # (confidence scoring, CRAG grading) expect [0, 1].
+    from doc_qa.retrieval.score_normalizer import normalize_sigmoid
+    normalize_sigmoid(result)
 
     logger.info(
         "Reranked %d chunks → top score=%.3f, bottom=%.3f",

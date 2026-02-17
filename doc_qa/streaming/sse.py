@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import time
+import uuid
 from typing import AsyncGenerator
 
 from fastapi import Request
@@ -76,6 +77,7 @@ async def streaming_query(
         ``ServerSentEvent`` instances with typed ``event`` fields.
     """
     t_start = time.monotonic()
+    query_id = uuid.uuid4().hex
 
     try:
         # ------------------------------------------------------------------
@@ -183,6 +185,8 @@ async def streaming_query(
                     max_rewrites=config.verification.max_crag_rewrites,
                     candidate_pool=pipeline._candidate_pool,
                     min_score=pipeline._min_score,
+                    rewrite_threshold=config.verification.crag_rewrite_threshold,
+                    retain_partial=config.verification.crag_retain_partial,
                 )
             except Exception as exc:
                 logger.warning("CRAG failed: %s", exc)
@@ -465,7 +469,11 @@ async def streaming_query(
 
         elapsed = round(time.monotonic() - t_start, 2)
         yield ServerSentEvent(
-            data=json.dumps({"status": "complete", "elapsed": elapsed}),
+            data=json.dumps({
+                "status": "complete",
+                "elapsed": elapsed,
+                "query_id": query_id,
+            }),
             event="done",
         )
 

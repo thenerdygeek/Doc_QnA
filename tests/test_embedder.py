@@ -14,7 +14,7 @@ class TestEmbedder:
         vecs = embed_texts(["Hello world"])
         assert len(vecs) == 1
         assert isinstance(vecs[0], np.ndarray)
-        assert vecs[0].shape == (384,)
+        assert vecs[0].shape == (768,)
 
     def test_embed_batch(self) -> None:
         """Embedding multiple texts should return one vector per text."""
@@ -22,7 +22,7 @@ class TestEmbedder:
         vecs = embed_texts(texts)
         assert len(vecs) == 3
         for v in vecs:
-            assert v.shape == (384,)
+            assert v.shape == (768,)
 
     def test_embed_empty_list(self) -> None:
         """Embedding empty list should return empty list."""
@@ -45,12 +45,12 @@ class TestEmbedder:
         assert sim_related > sim_unrelated
 
     def test_get_embedding_dimension(self) -> None:
-        """Should return 384 for the default model."""
+        """Should return 768 for the default model (nomic-embed-text-v1.5)."""
         dim = get_embedding_dimension()
-        assert dim == 384
+        assert dim == 768
 
     def test_embed_query(self) -> None:
         """embed_query should return a single vector."""
         vec = embed_query("What is authentication?")
         assert isinstance(vec, np.ndarray)
-        assert vec.shape == (384,)
+        assert vec.shape == (768,)

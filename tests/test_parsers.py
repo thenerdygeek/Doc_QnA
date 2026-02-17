@@ -218,6 +218,37 @@ class TestPlantUMLParser:
         assert ".puml" in parser.supported_extensions
         assert ".plantuml" in parser.supported_extensions
 
+    def test_activity_diagram_fallback(self, tmp_path: Path) -> None:
+        """Activity diagrams don't match sequence/component regexes — raw source fallback."""
+        content = dedent("""\
+            @startuml
+            title Digitize Card Process
+            start
+            :Scan physical card;
+            :Extract card details via OCR;
+            if (Card valid?) then (yes)
+              :Store in digital wallet;
+              :Send confirmation;
+            else (no)
+              :Show error message;
+            endif
+            stop
+            @enduml
+        """)
+        p = tmp_path / "digitizeCard.puml"
+        p.write_text(content, encoding="utf-8")
+
+        parser = PlantUMLParser()
+        sections = parser.parse(p)
+
+        assert len(sections) == 1
+        section = sections[0]
+        assert section.title == "Digitize Card Process"
+        # Raw source fallback should include the activity content
+        assert "Scan physical card" in section.content
+        assert "Extract card details via OCR" in section.content
+        assert "Store in digital wallet" in section.content
+
 
 # --- Registry Tests ---
 

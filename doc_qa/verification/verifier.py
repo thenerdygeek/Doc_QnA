@@ -34,32 +34,125 @@ class VerificationResult:
 # Response parsing
 # ---------------------------------------------------------------------------
 
-_VERDICT_RE = re.compile(r"Verdict\s*:\s*(PASS|FAIL)", re.IGNORECASE)
-_CONFIDENCE_RE = re.compile(r"Confidence\s*:\s*([\d.]+)", re.IGNORECASE)
-_ISSUES_RE = re.compile(r"Issues\s*:\s*(.+)", re.IGNORECASE)
-_FIX_RE = re.compile(r"Suggested\s+fix\s*:\s*(.+)", re.IGNORECASE)
+_VERDICT_RE = re.compile(
+    r"Verdict\s*[:—\-]\s*(PASS(?:ED)?|FAIL(?:ED)?|YES|NO|CORRECT|INCORRECT)",
+    re.IGNORECASE,
+)
+_CONFIDENCE_RE = re.compile(r"Confidence\s*[:—\-]\s*([\d.]+(?:\s*/\s*[\d.]+)?)", re.IGNORECASE)
+_ISSUES_RE = re.compile(r"Issues\s*[:—\-]\s*(.+)", re.IGNORECASE)
+_FIX_RE = re.compile(r"Suggested\s+fix\s*[:—\-]\s*(.+)", re.IGNORECASE)
+
+_PASS_SYNONYMS = frozenset({"pass", "passed", "yes", "correct"})
+_FAIL_SYNONYMS = frozenset({"fail", "failed", "no", "incorrect"})
+
+
+def _try_parse_json(response: str) -> VerificationResult | None:
+    """Try to parse the response as JSON (some LLMs return structured output)."""
+    import json
+
+    # Try to find a JSON block in the response
+    for start_marker in ("{", "```json\n", "```\n"):
+        idx = response.find(start_marker)
+        if idx == -1:
+            continue
+        candidate = response[idx:]
+        if candidate.startswith("```"):
+            # Strip code fence
+            candidate = candidate.split("\n", 1)[1] if "\n" in candidate else candidate
+            end = candidate.find("```")
+            if end != -1:
+                candidate = candidate[:end]
+        try:
+            data = json.loads(candidate)
+            if not isinstance(data, dict):
+                continue
+
+            # Extract verdict
+            verdict_raw = str(data.get("verdict", data.get("passed", ""))).lower()
+            if verdict_raw in _PASS_SYNONYMS or verdict_raw == "true":
+                passed = True
+            elif verdict_raw in _FAIL_SYNONYMS or verdict_raw == "false":
+                passed = False
+            else:
+                continue  # Unrecognisable verdict, skip JSON parse
+
+            # Extract confidence
+            conf_raw = data.get("confidence", 0.5)
+            confidence = float(conf_raw)
+            confidence = max(0.0, min(1.0, confidence))
+
+            # Extract issues
+            issues_raw = data.get("issues", [])
+            if isinstance(issues_raw, list):
+                issues = [str(i) for i in issues_raw if str(i).lower() != "none"]
+            elif isinstance(issues_raw, str):
+                issues = [] if issues_raw.lower() == "none" else [issues_raw]
+            else:
+                issues = []
+
+            # Extract suggested fix
+            fix_raw = data.get("suggested_fix", data.get("suggestedFix", None))
+            suggested_fix = None
+            if fix_raw and str(fix_raw).lower() != "none":
+                suggested_fix = str(fix_raw)
+
+            return VerificationResult(
+                passed=passed,
+                confidence=confidence,
+                issues=issues,
+                suggested_fix=suggested_fix,
+            )
+        except (json.JSONDecodeError, ValueError, TypeError):
+            continue
+
+    return None
+
+
+def _parse_confidence(raw: str) -> float:
+    """Parse confidence from various formats: '0.85', '8/10', '85%'."""
+    raw = raw.strip().rstrip("%")
+    if "/" in raw:
+        parts = raw.split("/")
+        try:
+            return max(0.0, min(1.0, float(parts[0].strip()) / float(parts[1].strip())))
+        except (ValueError, ZeroDivisionError):
+            return 0.5
+    try:
+        val = float(raw)
+        if val > 10:
+            # Percentage: 85 → 0.85
+            val = val / 100.0
+        elif val > 1.0 and val == int(val):
+            # Integer scale: 8 → 0.8 (but NOT 1.5 which is just out-of-range)
+            val = val / 10.0
+        return max(0.0, min(1.0, val))
+    except ValueError:
+        return 0.5
 
 
 def _parse_verification_response(response: str) -> VerificationResult:
     """Extract verdict, confidence, issues, and fix from the LLM response.
 
+    Tries JSON parsing first, then falls back to regex extraction.
     Falls back to safe defaults when any field cannot be parsed.
     """
-    # -- Verdict --
+    # Try JSON first (some models return structured output)
+    json_result = _try_parse_json(response)
+    if json_result is not None:
+        return json_result
+
+    # -- Verdict (regex) --
     m_verdict = _VERDICT_RE.search(response)
     if m_verdict:
-        passed = m_verdict.group(1).upper() == "PASS"
+        verdict_word = m_verdict.group(1).lower()
+        passed = verdict_word in _PASS_SYNONYMS
     else:
         passed = True  # conservative fallback
 
     # -- Confidence --
     m_confidence = _CONFIDENCE_RE.search(response)
     if m_confidence:
-        try:
-            confidence = float(m_confidence.group(1))
-            confidence = max(0.0, min(1.0, confidence))
-        except ValueError:
-            confidence = 0.5
+        confidence = _parse_confidence(m_confidence.group(1))
     else:
         confidence = 0.5
 

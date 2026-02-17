@@ -21,8 +21,8 @@ from doc_qa.config import (
     resolve_db_path,
 )
 
-# Embedding dimension for mock vectors
-_DIM = 384
+# Embedding dimension for mock vectors (nomic-embed-text-v1.5 = 768)
+_DIM = 768
 
 
 def _mock_embed(texts, **kwargs):
@@ -344,32 +344,9 @@ class TestC6HistoryPollution:
 # ---------------------------------------------------------------------------
 
 
-class TestH3RerankerVectorCaching:
-    def test_rerank_uses_cached_vectors(self) -> None:
-        """When chunks have pre-computed vectors, embed_texts should not be called."""
-        from doc_qa.retrieval.reranker import rerank
-        from doc_qa.retrieval.retriever import RetrievedChunk
-
-        vec = np.random.rand(384).astype(np.float32).tolist()
-        chunks = [
-            RetrievedChunk(
-                text=f"text {i}", score=0.5, chunk_id=f"c#{i}",
-                file_path="/t.md", file_type="md", section_title="T",
-                section_level=1, chunk_index=i, vector=vec,
-            )
-            for i in range(3)
-        ]
-
-        query_vec = np.random.rand(384).astype(np.float32)
-        with patch("doc_qa.retrieval.reranker.embed_texts") as mock_embed, \
-             patch("doc_qa.retrieval.reranker.embed_query", return_value=query_vec):
-            result = rerank("test query", chunks)
-
-        mock_embed.assert_not_called()
-        assert len(result) == 3
-
-    def test_rerank_embeds_when_no_vectors(self) -> None:
-        """When chunks lack vectors, embed_texts should be called."""
+class TestH3RerankerCrossEncoder:
+    def test_rerank_uses_cross_encoder(self) -> None:
+        """Cross-encoder reranker should call predict on query-chunk pairs."""
         from doc_qa.retrieval.reranker import rerank
         from doc_qa.retrieval.retriever import RetrievedChunk
 
@@ -382,14 +359,35 @@ class TestH3RerankerVectorCaching:
             for i in range(3)
         ]
 
-        query_vec = np.random.rand(384).astype(np.float32)
-        chunk_vecs = [np.random.rand(384).astype(np.float32) for _ in range(3)]
-        with patch("doc_qa.retrieval.reranker.embed_query", return_value=query_vec), \
-             patch("doc_qa.retrieval.reranker.embed_texts", return_value=chunk_vecs) as mock_embed:
+        fake_scores = np.array([0.9, 0.5, 0.7])
+        with patch("doc_qa.retrieval.reranker._get_cross_encoder") as mock_ce:
+            mock_ce.return_value.predict.return_value = fake_scores
             result = rerank("test query", chunks)
 
-        mock_embed.assert_called_once()
+        mock_ce.return_value.predict.assert_called_once()
         assert len(result) == 3
+        # Highest raw score (0.9) should come first; after sigmoid normalization
+        # the score becomes sigmoid(0.9) ≈ 0.711
+        assert result[0].score == pytest.approx(1.0 / (1.0 + np.exp(-0.9)), abs=1e-4)
+
+    def test_rerank_single_chunk_no_model(self) -> None:
+        """Single chunk should be returned as-is without loading model."""
+        from doc_qa.retrieval.reranker import rerank
+        from doc_qa.retrieval.retriever import RetrievedChunk
+
+        chunks = [
+            RetrievedChunk(
+                text="only one", score=0.5, chunk_id="c#0",
+                file_path="/t.md", file_type="md", section_title="T",
+                section_level=1, chunk_index=0,
+            )
+        ]
+
+        with patch("doc_qa.retrieval.reranker._get_cross_encoder") as mock_ce:
+            result = rerank("test query", chunks)
+
+        mock_ce.assert_not_called()
+        assert len(result) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -858,8 +856,8 @@ class TestM10DocstringFix:
         docstring = QueryPipeline.__doc__ or ""
         assert "cross-encoder" not in docstring.lower()
 
-    def test_reranker_mentions_bi_encoder(self) -> None:
-        """Reranker module should mention bi-encoder."""
+    def test_reranker_mentions_cross_encoder(self) -> None:
+        """Reranker module should mention cross-encoder."""
         import doc_qa.retrieval.reranker as mod
         docstring = mod.__doc__ or ""
-        assert "bi-encoder" in docstring.lower()
+        assert "cross-encoder" in docstring.lower()

@@ -40,6 +40,10 @@ _MODEL_GCS_INFO: dict[str, dict[str, str]] = {
         "dir_name": "fast-all-MiniLM-L6-v2",
         "hf_dir_name": "models--qdrant--all-MiniLM-L6-v2-onnx",
     },
+    "nomic-ai/nomic-embed-text-v1.5": {
+        "dir_name": "fast-nomic-embed-text-v1.5",
+        "hf_dir_name": "models--nomic-ai--nomic-embed-text-v1.5",
+    },
 }
 
 
@@ -85,8 +89,12 @@ def download_model_from_gcs(model_name: str, cache_dir: str | None = None) -> Pa
 
     cache = cache_dir or get_cache_dir()
     info = _MODEL_GCS_INFO.get(model_name)
-    if not info:
-        raise ValueError(f"No GCS download URL known for model: {model_name}")
+    if not info or "url" not in info:
+        raise ValueError(
+            f"No GCS download URL available for model: {model_name}. "
+            f"This model is downloaded automatically by FastEmbed from HuggingFace on first use. "
+            f"Run: pip install fastembed && python -c \"from fastembed import TextEmbedding; TextEmbedding('{model_name}')\""
+        )
 
     model_dir = Path(cache) / info["dir_name"]
 
@@ -159,7 +167,7 @@ def _has_local_model(cache_dir: str, model_name: str) -> bool:
     return False
 
 
-def _get_model(model_name: str = "sentence-transformers/all-MiniLM-L6-v2") -> object:
+def _get_model(model_name: str = "nomic-ai/nomic-embed-text-v1.5") -> object:
     """Get or create the FastEmbed TextEmbedding model (lazy singleton)."""
     global _model, _model_name
     if _model is not None and _model_name == model_name:
@@ -189,7 +197,7 @@ def _get_model(model_name: str = "sentence-transformers/all-MiniLM-L6-v2") -> ob
         return _model
 
 
-def get_embedding_dimension(model_name: str = "sentence-transformers/all-MiniLM-L6-v2") -> int:
+def get_embedding_dimension(model_name: str = "nomic-ai/nomic-embed-text-v1.5") -> int:
     """Return the embedding dimension for the given model.
 
     Known dimensions to avoid loading the model just for this:
@@ -211,7 +219,7 @@ def get_embedding_dimension(model_name: str = "sentence-transformers/all-MiniLM-
 
 def embed_texts(
     texts: list[str],
-    model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
+    model_name: str = "nomic-ai/nomic-embed-text-v1.5",
     batch_size: int = 64,
 ) -> list[NDArray[np.float32]]:
     """Embed a list of texts into vectors.
@@ -237,7 +245,7 @@ def embed_texts(
 
 def embed_query(
     query: str,
-    model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
+    model_name: str = "nomic-ai/nomic-embed-text-v1.5",
 ) -> NDArray[np.float32]:
     """Embed a single query string. Uses query_embed for asymmetric models."""
     model = _get_model(model_name)

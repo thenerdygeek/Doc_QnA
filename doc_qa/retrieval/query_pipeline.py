@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,6 +34,11 @@ class QueryResult:
     detected_formats: dict | None = None
     diagrams: list[str] | None = None
     sub_results: list[QueryResult] | None = None
+    # Tracking fields for feedback loop
+    query_id: str = ""
+    was_crag_rewritten: bool = False
+    chunk_ids_used: list[str] = field(default_factory=list)
+    retrieval_scores: list[float] = field(default_factory=list)
 
 
 @dataclass
@@ -66,7 +72,7 @@ class QueryPipeline:
         self,
         table: Any,
         llm_backend: Any,
-        embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2",
+        embedding_model: str = "nomic-ai/nomic-embed-text-v1.5",
         search_mode: str = "hybrid",
         candidate_pool: int = 20,
         top_k: int = 5,
@@ -74,14 +80,25 @@ class QueryPipeline:
         max_chunks_per_file: int = 2,
         rerank: bool = True,
         max_history_turns: int = 10,
+        reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        context_reorder: bool = True,
+        enable_hyde: bool = False,
+        reranker_min_score: float = 0.0,
         intelligence_config: Any | None = None,
         generation_config: Any | None = None,
         verification_config: Any | None = None,
+        enable_query_expansion: bool = False,
+        max_expansion_queries: int = 3,
+        hyde_weight: float = 0.7,
+        section_level_boost: float = 0.0,
+        recency_boost: float = 0.0,
     ) -> None:
         self._retriever = HybridRetriever(
             table=table,
             embedding_model=embedding_model,
             mode=search_mode,
+            section_level_boost=section_level_boost,
+            recency_boost=recency_boost,
         )
         self._llm = llm_backend
         self._candidate_pool = candidate_pool
@@ -89,11 +106,19 @@ class QueryPipeline:
         self._min_score = min_score
         self._max_per_file = max_chunks_per_file
         self._rerank = rerank
+        self._reranker_model = reranker_model
+        self._context_reorder = context_reorder
+        self._enable_hyde = enable_hyde
+        self._reranker_min_score = reranker_min_score
+        self._embedding_model = embedding_model
         self._history: list[dict] = []
         self._max_history = max_history_turns * 2  # each turn = question + answer
         self._intel_config = intelligence_config
         self._gen_config = generation_config
         self._verify_config = verification_config
+        self._enable_query_expansion = enable_query_expansion
+        self._max_expansion_queries = max_expansion_queries
+        self._hyde_weight = hyde_weight
 
     async def query(self, question: str) -> QueryResult:
         """Execute the full query pipeline with optional intelligence features."""
@@ -143,16 +168,115 @@ class QueryPipeline:
             logger.warning("Query decomposition failed: %s", exc)
         return [(question, intent_match)]
 
+    async def _multi_query_retrieve(
+        self,
+        question: str,
+        candidate_pool: int,
+        min_score: float,
+    ) -> list[RetrievedChunk]:
+        """Retrieve using multiple query variants and merge with RRF.
+
+        1. Expand the original question into alternative phrasings via LLM.
+        2. Retrieve independently for each variant.
+        3. Merge all result sets using Reciprocal Rank Fusion (RRF).
+        4. Deduplicate by chunk_id, keeping highest cumulative RRF score.
+        5. Normalize merged scores to [0, 1].
+
+        Args:
+            question: The user's original query.
+            candidate_pool: Number of candidates to retrieve per variant.
+            min_score: Minimum score threshold for initial retrieval.
+
+        Returns:
+            Merged and deduplicated list of chunks sorted by score descending,
+            limited to *candidate_pool* entries.
+        """
+        from doc_qa.retrieval.query_expander import expand_query
+        from doc_qa.retrieval.score_normalizer import normalize_min_max
+
+        variants = await expand_query(
+            question, self._llm, n_variants=self._max_expansion_queries,
+        )
+        logger.info("Multi-query: %d variant(s) (including original).", len(variants))
+
+        # RRF constant (same as retriever._RRF_K)
+        rrf_k = 60
+
+        # Accumulate RRF scores per chunk
+        rrf_scores: dict[str, float] = {}
+        chunk_map: dict[str, RetrievedChunk] = {}
+
+        for variant in variants:
+            results = self._retriever.search(
+                query=variant, top_k=candidate_pool, min_score=min_score,
+            )
+            for rank, chunk in enumerate(results):
+                rrf = 1.0 / (rank + rrf_k)
+                rrf_scores[chunk.chunk_id] = rrf_scores.get(chunk.chunk_id, 0.0) + rrf
+                # Keep first occurrence (highest quality from best-matching variant)
+                if chunk.chunk_id not in chunk_map:
+                    chunk_map[chunk.chunk_id] = chunk
+
+        # Sort by cumulative RRF score
+        sorted_ids = sorted(rrf_scores, key=lambda cid: rrf_scores[cid], reverse=True)
+
+        merged: list[RetrievedChunk] = []
+        for cid in sorted_ids[:candidate_pool]:
+            c = chunk_map[cid]
+            c.score = rrf_scores[cid]
+            merged.append(c)
+
+        # Normalize to [0, 1]
+        normalize_min_max(merged)
+        return merged
+
     async def _process_single(
         self, question: str, intent_match: Any | None,
     ) -> QueryResult:
         """Process a single query through the full pipeline."""
-        # ── Retrieve ──────────────────────────────────────────────
-        candidates = self._retriever.search(
-            query=question,
-            top_k=self._candidate_pool,
-            min_score=self._min_score,
-        )
+        query_id = uuid.uuid4().hex
+
+        # ── HyDE: Hypothetical Document Embeddings ────────────────
+        if self._enable_hyde:
+            try:
+                from doc_qa.retrieval.query_expander import generate_combined_embedding
+                combined_vec = await generate_combined_embedding(
+                    question, self._llm,
+                    embedding_model=self._embedding_model,
+                    hyde_weight=self._hyde_weight,
+                )
+                candidates = self._retriever.search_by_vector(
+                    combined_vec, top_k=self._candidate_pool, min_score=self._min_score,
+                )
+                logger.info("HyDE combined embedding retrieved %d candidates.", len(candidates))
+            except Exception as exc:
+                logger.warning("HyDE failed, falling back to standard retrieval: %s", exc)
+                candidates = self._retriever.search(
+                    query=question,
+                    top_k=self._candidate_pool,
+                    min_score=self._min_score,
+                )
+        elif self._enable_query_expansion:
+            # ── Multi-query retrieval (query expansion + RRF merge) ──
+            try:
+                candidates = await self._multi_query_retrieve(
+                    question, self._candidate_pool, self._min_score,
+                )
+                logger.info("Multi-query retrieved %d candidates.", len(candidates))
+            except Exception as exc:
+                logger.warning("Query expansion failed, falling back: %s", exc)
+                candidates = self._retriever.search(
+                    query=question,
+                    top_k=self._candidate_pool,
+                    min_score=self._min_score,
+                )
+        else:
+            # ── Standard Retrieve ─────────────────────────────────
+            candidates = self._retriever.search(
+                query=question,
+                top_k=self._candidate_pool,
+                min_score=self._min_score,
+            )
         logger.info("Retrieved %d candidates.", len(candidates))
 
         if not candidates:
@@ -162,6 +286,7 @@ class QueryPipeline:
                 chunks_retrieved=0,
                 chunks_after_rerank=0,
                 model="none",
+                query_id=query_id,
             )
 
         # ── Near-duplicate dedup (version-aware) ─────────────────
@@ -174,12 +299,27 @@ class QueryPipeline:
         reranked = candidates
         if self._rerank and len(candidates) > 1:
             from doc_qa.retrieval.reranker import rerank
-            reranked = rerank(query=question, chunks=candidates, top_k=None)
+            reranked = rerank(query=question, chunks=candidates, model_name=self._reranker_model, top_k=None)
             logger.info("Reranked to %d chunks.", len(reranked))
+
+        # ── Post-rerank score filter ──────────────────────────────
+        if self._reranker_min_score > 0 and reranked:
+            from doc_qa.retrieval.score_normalizer import filter_by_score
+            before = len(reranked)
+            reranked = filter_by_score(reranked, self._reranker_min_score)
+            if len(reranked) < before:
+                logger.info(
+                    "Score filter: %d → %d chunks (min_score=%.2f).",
+                    before, len(reranked), self._reranker_min_score,
+                )
 
         # ── File diversity cap ────────────────────────────────────
         diverse = self._apply_file_diversity(reranked)
         top_chunks = diverse[: self._top_k]
+
+        # ── Context reordering (anti "lost in middle") ────────────
+        if self._context_reorder:
+            top_chunks = self._reorder_chunks(top_chunks)
 
         # ── CRAG: Grade + rewrite if needed ───────────────────────
         was_rewritten = False
@@ -194,6 +334,8 @@ class QueryPipeline:
                     max_rewrites=self._verify_config.max_crag_rewrites,
                     candidate_pool=self._candidate_pool,
                     min_score=self._min_score,
+                    rewrite_threshold=self._verify_config.crag_rewrite_threshold,
+                    retain_partial=self._verify_config.crag_retain_partial,
                 )
                 if was_rewritten:
                     logger.info("CRAG rewrote query; %d chunks after re-retrieval.", len(top_chunks))
@@ -251,6 +393,7 @@ class QueryPipeline:
                     chunks_after_rerank=len(top_chunks),
                     model=answer_model,
                     error=answer.error,
+                    query_id=query_id,
                 )
 
         # ── Detect output formats ─────────────────────────────────
@@ -305,6 +448,39 @@ class QueryPipeline:
                     source_texts=[c.text for c in top_chunks],
                     llm_backend=self._llm,
                 )
+
+                # ── Answer refinement: re-generate if verification failed ──
+                if (
+                    verification is not None
+                    and not verification.passed
+                    and verification.suggested_fix
+                    and verification.confidence < 0.8
+                ):
+                    try:
+                        from doc_qa.llm.prompt_templates import ANSWER_REFINEMENT
+                        refine_prompt = ANSWER_REFINEMENT.format(
+                            question=question,
+                            original_answer=answer_text,
+                            issues=", ".join(verification.issues) if verification.issues else "none",
+                            suggested_fix=verification.suggested_fix,
+                        )
+                        refined = await self._llm.ask(
+                            question=refine_prompt, context=context,
+                        )
+                        if refined.text and not refined.error:
+                            logger.info("Answer refined based on verification feedback.")
+                            answer_text = refined.text
+                            answer_model = refined.model
+                            # Re-verify the refined answer
+                            verification = await verify_answer(
+                                question=question,
+                                answer=answer_text,
+                                source_texts=[c.text for c in top_chunks],
+                                llm_backend=self._llm,
+                            )
+                    except Exception as exc:
+                        logger.debug("Answer refinement failed: %s", exc)
+
             except Exception as exc:
                 logger.warning("Verification failed: %s", exc)
 
@@ -327,6 +503,13 @@ class QueryPipeline:
                         + (assessment.abstain_reason or "")
                     ).strip()
                     logger.info("Abstaining: confidence=%.2f", confidence_score)
+                elif assessment.caveat_added:
+                    answer_text += (
+                        "\n\n---\n*Note: This answer is based on limited evidence "
+                        f"(confidence: {confidence_score:.0%}). "
+                        "Please verify against the original documentation.*"
+                    )
+                    logger.info("Caveat added: confidence=%.2f", confidence_score)
             except Exception as exc:
                 logger.debug("Confidence scoring unavailable: %s", exc)
 
@@ -375,6 +558,10 @@ class QueryPipeline:
             verification_passed=verification.passed if verification else None,
             detected_formats=detected_formats,
             diagrams=diagrams,
+            query_id=query_id,
+            was_crag_rewritten=was_rewritten,
+            chunk_ids_used=[c.chunk_id for c in top_chunks],
+            retrieval_scores=[round(c.score, 4) for c in top_chunks],
         )
 
     def _merge_results(
@@ -442,6 +629,23 @@ class QueryPipeline:
                 file_counts[chunk.file_path] += 1
 
         return result
+
+    @staticmethod
+    def _reorder_chunks(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+        """Reorder chunks so highest-scored appear at start and end.
+
+        Addresses the "lost in the middle" problem where LLMs attend
+        less to content in the middle of long contexts.
+        Order: 1st, 3rd, 5th, ..., 4th, 2nd (best at edges).
+        """
+        if len(chunks) <= 2:
+            return chunks
+        reordered: list[RetrievedChunk] = []
+        for i in range(0, len(chunks), 2):
+            reordered.append(chunks[i])        # odd positions (0,2,4...)
+        for i in range(len(chunks) - 1 if len(chunks) % 2 == 0 else len(chunks) - 2, 0, -2):
+            reordered.append(chunks[i])        # even positions reversed
+        return reordered
 
     @staticmethod
     def _build_context(chunks: list[RetrievedChunk]) -> str:

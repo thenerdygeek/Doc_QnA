@@ -98,15 +98,18 @@ async def rewrite_query(
 def merge_candidates(
     graded: list[GradedChunk],
     new_chunks: list[RetrievedChunk],
+    retain_partial: bool = True,
 ) -> list[RetrievedChunk]:
-    """Merge original RELEVANT chunks with newly retrieved chunks.
+    """Merge original RELEVANT (and optionally PARTIAL) chunks with new chunks.
 
-    Original chunks graded as ``"relevant"`` are kept and placed first.
-    New chunks are appended, skipping duplicates (by ``chunk_id``).
+    Ordering: RELEVANT originals first, then PARTIAL originals (if retained),
+    then newly retrieved chunks.  Duplicates (by ``chunk_id``) are skipped.
 
     Args:
         graded: Graded original chunks.
         new_chunks: Freshly retrieved chunks from the rewritten query.
+        retain_partial: If ``True``, keep PARTIAL chunks between RELEVANT
+            originals and new chunks.
 
     Returns:
         Deduplicated list of :class:`RetrievedChunk`.
@@ -120,15 +123,25 @@ def merge_candidates(
             seen_ids.add(gc.chunk.chunk_id)
             merged.append(gc.chunk)
 
+    # Keep partial chunks after relevant (semi-useful evidence).
+    if retain_partial:
+        for gc in graded:
+            if gc.grade == "partial" and gc.chunk.chunk_id not in seen_ids:
+                seen_ids.add(gc.chunk.chunk_id)
+                merged.append(gc.chunk)
+
     # Append new results, deduplicating.
     for chunk in new_chunks:
         if chunk.chunk_id not in seen_ids:
             seen_ids.add(chunk.chunk_id)
             merged.append(chunk)
 
+    n_relevant = sum(1 for g in graded if g.grade == "relevant")
+    n_partial = sum(1 for g in graded if g.grade == "partial") if retain_partial else 0
     logger.debug(
-        "Merged candidates: %d kept-relevant + %d new = %d total (deduped).",
-        sum(1 for g in graded if g.grade == "relevant"),
+        "Merged candidates: %d relevant + %d partial + %d new = %d total (deduped).",
+        n_relevant,
+        n_partial,
         len(new_chunks),
         len(merged),
     )
@@ -143,6 +156,8 @@ async def corrective_retrieve(
     max_rewrites: int = 2,
     candidate_pool: int = 20,
     min_score: float = 0.3,
+    rewrite_threshold: float = 0.5,
+    retain_partial: bool = True,
 ) -> tuple[list[RetrievedChunk], bool]:
     """Full CRAG flow: grade, optionally rewrite, re-retrieve, and merge.
 
@@ -159,6 +174,10 @@ async def corrective_retrieve(
         max_rewrites: Maximum number of rewrite-and-retrieve cycles.
         candidate_pool: Number of candidates to fetch per retrieval.
         min_score: Minimum score threshold for retrieval.
+        rewrite_threshold: Fraction of irrelevant chunks that triggers a rewrite
+            (default 0.5 = rewrite when more than half are irrelevant).
+        retain_partial: If ``True``, keep PARTIAL-graded chunks in merge
+            results alongside RELEVANT and new chunks.
 
     Returns:
         A tuple of ``(final_chunks, was_rewritten)`` where *was_rewritten*
@@ -176,7 +195,7 @@ async def corrective_retrieve(
         graded = await grade_documents(current_query, current_chunks, llm_backend)
 
         # Step 2: Decide whether to rewrite.
-        if not should_rewrite(graded):
+        if not should_rewrite(graded, threshold=rewrite_threshold):
             # Good enough — return only relevant + partial chunks, drop irrelevant.
             final = [
                 gc.chunk for gc in graded if gc.grade in ("relevant", "partial")
@@ -203,7 +222,7 @@ async def corrective_retrieve(
         )
 
         # Step 4: Merge relevant originals with new results.
-        current_chunks = merge_candidates(graded, new_chunks)
+        current_chunks = merge_candidates(graded, new_chunks, retain_partial=retain_partial)
         current_query = rewritten
 
     # Exhausted all rewrites — do one final grading pass to filter.

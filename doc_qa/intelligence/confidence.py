@@ -24,6 +24,7 @@ class ConfidenceAssessment:
     verification_signal: float
     should_abstain: bool
     abstain_reason: str | None = None
+    caveat_added: bool = False
 
 
 def compute_confidence(
@@ -62,13 +63,23 @@ def compute_confidence(
     combined = max(0.0, min(1.0, combined))
 
     should_abstain = False
+    caveat_added = False
     abstain_reason: str | None = None
 
-    if combined < config.confidence_threshold and config.abstain_on_low_confidence:
+    caveat_threshold = getattr(config, "caveat_threshold", 0.4)
+
+    if combined >= config.confidence_threshold:
+        # High confidence — normal answer
+        pass
+    elif combined >= caveat_threshold:
+        # Moderate confidence — answer with caveat
+        caveat_added = True
+    elif config.abstain_on_low_confidence:
+        # Low confidence — abstain
         should_abstain = True
         abstain_reason = (
             f"Confidence {combined:.2f} is below threshold "
-            f"{config.confidence_threshold:.2f}"
+            f"{caveat_threshold:.2f}"
         )
 
     assessment = ConfidenceAssessment(
@@ -77,15 +88,17 @@ def compute_confidence(
         verification_signal=verification_signal,
         should_abstain=should_abstain,
         abstain_reason=abstain_reason,
+        caveat_added=caveat_added,
     )
 
     logger.info(
         "Confidence: score=%.2f (retrieval=%.2f, verification=%.2f), "
-        "abstain=%s",
+        "abstain=%s, caveat=%s",
         combined,
         retrieval_signal,
         verification_signal,
         should_abstain,
+        caveat_added,
     )
 
     return assessment

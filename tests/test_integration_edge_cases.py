@@ -558,7 +558,7 @@ class TestRetrieverEdgeCases:
 
 
 class TestRerankerEdgeCases:
-    """Edge cases for the bi-encoder reranker."""
+    """Edge cases for the cross-encoder reranker."""
 
     def _make_chunk(self, text: str, chunk_id: str = "test#0") -> RetrievedChunk:
         return RetrievedChunk(
@@ -568,10 +568,16 @@ class TestRerankerEdgeCases:
 
     def test_rerank_identical_chunks(self) -> None:
         """Reranking identical chunks should not crash (all same score)."""
+        from unittest.mock import patch
+
         from doc_qa.retrieval.reranker import rerank
 
         chunks = [self._make_chunk("Identical content here.", f"c#{i}") for i in range(3)]
-        result = rerank("test query", chunks)
+        import numpy as np
+        fake_scores = np.array([0.8, 0.8, 0.8])
+        with patch("doc_qa.retrieval.reranker._get_cross_encoder") as mock_ce:
+            mock_ce.return_value.predict.return_value = fake_scores
+            result = rerank("test query", chunks)
         assert len(result) == 3
         # All scores should be approximately equal
         scores = [r.score for r in result]
@@ -579,6 +585,8 @@ class TestRerankerEdgeCases:
 
     def test_rerank_top_k_none_returns_all(self) -> None:
         """top_k=None should return all chunks."""
+        from unittest.mock import patch
+
         from doc_qa.retrieval.reranker import rerank
 
         chunks = [
@@ -586,11 +594,17 @@ class TestRerankerEdgeCases:
             self._make_chunk("Kubernetes deploys containers.", "b#0"),
             self._make_chunk("PostgreSQL for data storage.", "c#0"),
         ]
-        result = rerank("OAuth authentication", chunks, top_k=None)
+        import numpy as np
+        fake_scores = np.array([0.9, 0.3, 0.5])
+        with patch("doc_qa.retrieval.reranker._get_cross_encoder") as mock_ce:
+            mock_ce.return_value.predict.return_value = fake_scores
+            result = rerank("OAuth authentication", chunks, top_k=None)
         assert len(result) == 3
 
     def test_rerank_preserves_metadata(self) -> None:
         """Reranking should preserve all chunk metadata (file_path, section_title, etc.)."""
+        from unittest.mock import patch
+
         from doc_qa.retrieval.reranker import rerank
 
         chunk = RetrievedChunk(
@@ -603,7 +617,11 @@ class TestRerankerEdgeCases:
             section_level=2,
             chunk_index=3,
         )
-        result = rerank("auth", [chunk, self._make_chunk("filler text", "b#0")])
+        import numpy as np
+        fake_scores = np.array([0.9, 0.3])
+        with patch("doc_qa.retrieval.reranker._get_cross_encoder") as mock_ce:
+            mock_ce.return_value.predict.return_value = fake_scores
+            result = rerank("auth", [chunk, self._make_chunk("filler text", "b#0")])
         auth_chunk = next(r for r in result if r.chunk_id == "auth.md#0")
         assert auth_chunk.file_path == "/docs/auth.md"
         assert auth_chunk.file_type == "md"
@@ -1173,11 +1191,11 @@ class TestRealRepoEdgeCases:
         assert len(ids) == len(set(ids)), f"Found {len(ids) - len(set(ids))} duplicate chunk IDs"
 
     def test_vector_dimensions_consistent(self, arc42_index_cls: DocIndex) -> None:
-        """All vectors should have the same dimension (384)."""
+        """All vectors should have the same dimension (768 for nomic-embed-text-v1.5)."""
         table = arc42_index_cls._table.to_arrow()
         vectors = table.column("vector").to_pylist()
         for i, v in enumerate(vectors[:20]):  # Sample first 20
-            assert len(v) == 384, f"Vector at row {i} has dimension {len(v)}, expected 384"
+            assert len(v) == 768, f"Vector at row {i} has dimension {len(v)}, expected 768"
 
     def test_negative_query_irrelevant_topic(self, arc42_index_cls: DocIndex) -> None:
         """Completely irrelevant query should return low-scoring results."""

@@ -364,11 +364,16 @@ class TestConfidenceScoring:
         assert result.verification_signal == pytest.approx(0.4)
 
     def test_abstention_below_threshold(self):
+        # Three-zone logic: >= confidence → normal, >= caveat → caveat, < caveat → abstain
+        # Use failed verification to push score below caveat_threshold (0.4)
+        vr = VerificationResult(passed=False, confidence=0.1, issues=["wrong"])
         result = compute_confidence(
             retrieval_scores=[0.1],
-            verification=None,
+            verification=vr,
             config=self._config(threshold=0.8, abstain=True),
         )
+        # retrieval=0.05 (halved), verification=max(0,0.1-0.2)=0.0
+        # combined = 0.4*0.05 + 0.6*0.0 = 0.02 → below caveat_threshold → abstain
         assert result.should_abstain
         assert result.abstain_reason is not None
 

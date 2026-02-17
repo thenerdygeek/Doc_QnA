@@ -133,7 +133,7 @@ class TestDocIndex:
         stats = tmp_index.stats()
         assert stats["total_chunks"] == 5
         assert stats["total_files"] == 1
-        assert stats["embedding_dim"] == 384
+        assert stats["embedding_dim"] == 768
 
     def test_reopen_persists(self, tmp_path: Path, sample_doc: Path) -> None:
         """Data should persist across DocIndex instances."""
@@ -148,3 +148,100 @@ class TestDocIndex:
         # Reopen
         idx2 = DocIndex(db_path=db_path)
         assert idx2.count_rows() == 4
+
+
+class TestContentTypeMigration:
+    def test_new_index_has_content_type_column(self, tmp_path: Path) -> None:
+        """A freshly created index should include the content_type column."""
+        index = DocIndex(db_path=str(tmp_path / "new_db"))
+        schema_names = index._table.schema.names
+        assert "content_type" in schema_names
+
+    def test_content_type_stored_on_add(self, tmp_path: Path, sample_doc: Path) -> None:
+        """Chunks with metadata should store content_type correctly."""
+        index = DocIndex(db_path=str(tmp_path / "ct_db"))
+        fp = str(sample_doc)
+
+        chunk_prose = Chunk(
+            chunk_id=f"{fp}#0",
+            text="Some prose text.",
+            file_path=fp,
+            file_type="md",
+            section_title="Prose",
+            section_level=1,
+            chunk_index=0,
+            metadata={"content_type": "prose"},
+        )
+        chunk_table = Chunk(
+            chunk_id=f"{fp}#1",
+            text="| A | B |\n| --- | --- |",
+            file_path=fp,
+            file_type="md",
+            section_title="Table",
+            section_level=1,
+            chunk_index=1,
+            metadata={"content_type": "table"},
+        )
+        chunk_code = Chunk(
+            chunk_id=f"{fp}#2",
+            text="```python\nprint(1)\n```",
+            file_path=fp,
+            file_type="md",
+            section_title="Code",
+            section_level=1,
+            chunk_index=2,
+            metadata={"content_type": "code"},
+        )
+
+        index.add_chunks([chunk_prose, chunk_table, chunk_code], file_hash="test")
+
+        # Verify stored content_type values
+        arrow = index._table.to_arrow()
+        ct_values = arrow.column("content_type").to_pylist()
+        assert "prose" in ct_values
+        assert "table" in ct_values
+        assert "code" in ct_values
+
+    def test_migration_adds_content_type_to_existing(self, tmp_path: Path) -> None:
+        """Opening an index that lacks content_type should auto-migrate it."""
+        import lancedb
+        import numpy as np
+        import pyarrow as pa
+
+        from doc_qa.indexing.embedder import get_embedding_dimension
+
+        db_path = str(tmp_path / "migrate_db")
+        dim = get_embedding_dimension("nomic-ai/nomic-embed-text-v1.5")
+
+        # Create a table WITHOUT content_type (simulating old index) WITH data
+        db = lancedb.connect(db_path)
+        data = pa.table({
+            "chunk_id": ["test#0"],
+            "text": ["hello world"],
+            "vector": [np.zeros(dim, dtype=np.float32).tolist()],
+            "file_path": ["test.md"],
+            "file_type": ["md"],
+            "section_title": ["Test"],
+            "section_level": [1],
+            "chunk_index": [0],
+            "file_hash": ["abc"],
+            "doc_date": [0.0],
+        })
+        db.create_table("doc_chunks", data)
+
+        # Verify content_type is NOT in the schema yet
+        t = db.open_table("doc_chunks")
+        assert "content_type" not in t.schema.names
+
+        # Now open with DocIndex — should trigger migration
+        index = DocIndex(db_path=db_path)
+        assert "content_type" in index._table.schema.names
+        # Existing row should have default "prose"
+        arrow = index._table.to_arrow()
+        assert arrow.column("content_type")[0].as_py() == "prose"
+
+    @pytest.fixture
+    def sample_doc(self, tmp_path: Path) -> Path:
+        p = tmp_path / "sample.md"
+        p.write_text("# Sample\n\nTest doc.", encoding="utf-8")
+        return p

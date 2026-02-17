@@ -96,6 +96,12 @@ class RetrievalResponse(BaseModel):
     chunks: list[RetrievalChunkResponse]
 
 
+class FeedbackRequest(BaseModel):
+    query_id: str
+    rating: int = Field(ge=-1, le=1)  # -1, 0, 1
+    comment: str = ""
+
+
 # ── Session store ────────────────────────────────────────────────────
 
 
@@ -300,9 +306,15 @@ def create_app(
             max_chunks_per_file=cfg.retrieval.max_chunks_per_file,
             rerank=cfg.retrieval.rerank,
             max_history_turns=cfg.retrieval.max_history_turns,
+            reranker_min_score=cfg.retrieval.reranker_min_score,
             intelligence_config=cfg.intelligence,
             generation_config=cfg.generation,
             verification_config=cfg.verification,
+            enable_query_expansion=cfg.retrieval.enable_query_expansion,
+            max_expansion_queries=cfg.retrieval.max_expansion_queries,
+            hyde_weight=cfg.retrieval.hyde_weight,
+            section_level_boost=cfg.retrieval.section_level_boost,
+            recency_boost=cfg.retrieval.recency_boost,
         )
 
     async def _ensure_llm() -> None:
@@ -336,6 +348,16 @@ def create_app(
 
             init_engine(db_url)
             logger.info("Database persistence enabled")
+
+        # Startup: initialise feedback SQLite store
+        try:
+            from doc_qa.feedback.store import init_feedback_store
+
+            feedback_db = str(Path(db_path).parent / "feedback.db") if db_path else "./data/feedback.db"
+            await init_feedback_store(feedback_db)
+            logger.info("Feedback store initialized at %s", feedback_db)
+        except Exception as exc:
+            logger.warning("Feedback store initialization failed (non-fatal): %s", exc)
 
         yield
 
@@ -1022,6 +1044,37 @@ def create_app(
             return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}
+
+    # ── Feedback endpoints ──────────────────────────────────────────
+
+    @app.post("/api/feedback")
+    async def submit_feedback(req: FeedbackRequest) -> dict:
+        """Submit feedback (thumbs up/down) for a query."""
+        from doc_qa.feedback.store import FeedbackRecord, save_feedback
+
+        record = FeedbackRecord(
+            query_id=req.query_id,
+            question="",  # filled from tracking if available
+            answer="",
+            rating=req.rating,
+            comment=req.comment,
+        )
+        await save_feedback(record)
+        return {"ok": True}
+
+    @app.get("/api/feedback/stats")
+    async def feedback_stats() -> dict:
+        """Return aggregated feedback statistics."""
+        from doc_qa.feedback.store import get_feedback_stats
+
+        return await get_feedback_stats()
+
+    @app.get("/api/feedback/export")
+    async def feedback_export(limit: int = 100) -> list:
+        """Export positively-rated Q&A pairs for evaluation."""
+        from doc_qa.feedback.store import export_positive_feedback
+
+        return await export_positive_feedback(limit)
 
     # ── Static files (frontend SPA) ──────────────────────────────────
     # NOTE: SPA mount MUST be last — it catches all unmatched paths.

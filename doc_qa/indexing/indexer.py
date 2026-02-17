@@ -46,7 +46,7 @@ class DocIndex:
     def __init__(
         self,
         db_path: str = "./data/doc_qa_db",
-        embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2",
+        embedding_model: str = "nomic-ai/nomic-embed-text-v1.5",
     ) -> None:
         import lancedb
 
@@ -70,6 +70,15 @@ class DocIndex:
             # Migrate: add doc_date column if missing (pre-v2 indexes)
             if "doc_date" not in table.schema.names:
                 self._migrate_add_doc_date(table)
+                # Migration may have replaced the table reference
+                if hasattr(self, "_table") and self._table is not None:
+                    table = self._table
+            # Migrate: add content_type column if missing (pre-v3 indexes)
+            if "content_type" not in table.schema.names:
+                self._migrate_add_content_type(table)
+                # Migration may have replaced the table reference
+                if hasattr(self, "_table") and self._table is not None:
+                    table = self._table
             return table
 
         # Create with explicit schema
@@ -84,6 +93,7 @@ class DocIndex:
             pa.field("chunk_index", pa.int32()),
             pa.field("file_hash", pa.utf8()),
             pa.field("doc_date", pa.float64()),
+            pa.field("content_type", pa.utf8()),
         ])
 
         table = self._db.create_table(self.TABLE_NAME, schema=schema)
@@ -111,6 +121,30 @@ class DocIndex:
         except Exception:
             logger.warning(
                 "Failed to migrate doc_date column — dates will be unavailable until re-index.",
+                exc_info=True,
+            )
+
+    def _migrate_add_content_type(self, table: Any) -> None:
+        """Add content_type column to an existing table (migration for pre-v3 indexes).
+
+        Sets all existing rows to ``"prose"`` (default).
+        Next incremental or full re-index will backfill actual content types.
+        """
+        try:
+            arrow_table = table.to_arrow()
+            n = arrow_table.num_rows
+            content_type_col = pa.array(["prose"] * n, type=pa.utf8())
+            new_table = arrow_table.append_column("content_type", content_type_col)
+            self._db.drop_table(self.TABLE_NAME)
+            new_lance_table = self._db.create_table(self.TABLE_NAME, new_table)
+            logger.info(
+                "Migrated table '%s': added content_type column (%d rows).",
+                self.TABLE_NAME, n,
+            )
+            self._table = new_lance_table
+        except Exception:
+            logger.warning(
+                "Failed to migrate content_type column — types will be unavailable until re-index.",
                 exc_info=True,
             )
 
@@ -245,6 +279,7 @@ class DocIndex:
                 "chunk_index": chunk.chunk_index,
                 "file_hash": h,
                 "doc_date": date_lookup.get(chunk.file_path, 0.0),
+                "content_type": chunk.metadata.get("content_type", "prose"),
             })
 
         self._table.add(records)

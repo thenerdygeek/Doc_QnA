@@ -1,1 +1,41 @@
 """Evaluation framework for retrieval quality."""
+
+from doc_qa.eval.evaluator import (
+    CaseResult,
+    ComparisonResult,
+    DifficultyBreakdown,
+    EvalSummary,
+    TestCase,
+    compare_evaluations,
+    evaluate,
+    evaluate_case,
+    f1_at_k,
+    format_comparison,
+    format_report,
+    hit_at_k,
+    load_test_cases,
+    ndcg_at_k,
+    precision_at_k,
+    recall_at_k,
+    reciprocal_rank,
+)
+
+__all__ = [
+    "CaseResult",
+    "ComparisonResult",
+    "DifficultyBreakdown",
+    "EvalSummary",
+    "TestCase",
+    "compare_evaluations",
+    "evaluate",
+    "evaluate_case",
+    "f1_at_k",
+    "format_comparison",
+    "format_report",
+    "hit_at_k",
+    "load_test_cases",
+    "ndcg_at_k",
+    "precision_at_k",
+    "recall_at_k",
+    "reciprocal_rank",
+]

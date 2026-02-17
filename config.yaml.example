@@ -19,7 +19,8 @@ indexing:
   chunk_size: 512
   chunk_overlap: 50
   min_chunk_size: 100
-  embedding_model: sentence-transformers/all-MiniLM-L6-v2
+  embedding_model: nomic-ai/nomic-embed-text-v1.5
+  chunking_strategy: paragraph  # "paragraph" (fast) or "semantic" (embedding-based topic detection)
 retrieval:
   search_mode: hybrid
   top_k: 5
@@ -27,8 +28,11 @@ retrieval:
   min_score: 0.3
   max_chunks_per_file: 2
   rerank: true
+  reranker_model: cross-encoder/ms-marco-MiniLM-L-6-v2
   max_query_length: 2000
   max_history_turns: 10
+  context_reorder: true
+  enable_hyde: true  # HyDE: generate hypothetical doc, use weighted embedding for better recall
 llm:
   primary: cody
   fallback: ollama

@@ -219,3 +219,51 @@ class TestContextBuilding:
     def test_build_context_empty(self) -> None:
         """Empty chunk list should produce empty context."""
         assert QueryPipeline._build_context([]) == ""
+
+
+class TestContextReordering:
+    def test_reorder_empty(self) -> None:
+        """Empty list should return empty."""
+        assert QueryPipeline._reorder_chunks([]) == []
+
+    def test_reorder_single(self) -> None:
+        """Single chunk should return as-is."""
+        from doc_qa.retrieval.retriever import RetrievedChunk
+        chunk = RetrievedChunk(
+            text="a", score=1.0, chunk_id="a#0", file_path="a.md",
+            file_type="md", section_title="A", section_level=1, chunk_index=0,
+        )
+        result = QueryPipeline._reorder_chunks([chunk])
+        assert len(result) == 1
+
+    def test_reorder_two(self) -> None:
+        """Two chunks should return as-is."""
+        from doc_qa.retrieval.retriever import RetrievedChunk
+        chunks = [
+            RetrievedChunk(text="a", score=1.0, chunk_id="a#0", file_path="a.md",
+                          file_type="md", section_title="A", section_level=1, chunk_index=0),
+            RetrievedChunk(text="b", score=0.9, chunk_id="b#0", file_path="b.md",
+                          file_type="md", section_title="B", section_level=1, chunk_index=0),
+        ]
+        result = QueryPipeline._reorder_chunks(chunks)
+        assert len(result) == 2
+
+    def test_reorder_places_best_at_edges(self) -> None:
+        """Best-scored chunks should end up at beginning and end."""
+        from doc_qa.retrieval.retriever import RetrievedChunk
+        # Input is assumed already sorted by score descending
+        chunks = [
+            RetrievedChunk(text=f"chunk_{i}", score=1.0 - i * 0.1, chunk_id=f"c#{i}",
+                          file_path="f.md", file_type="md", section_title="S",
+                          section_level=1, chunk_index=i)
+            for i in range(5)
+        ]
+        result = QueryPipeline._reorder_chunks(chunks)
+        assert len(result) == 5
+        # First chunk should be the highest scored (index 0)
+        assert result[0].chunk_id == "c#0"
+        # Last chunk should be the second highest (index 1)
+        assert result[-1].chunk_id == "c#1"
+        # All chunks should be present
+        result_ids = {c.chunk_id for c in result}
+        assert result_ids == {f"c#{i}" for i in range(5)}

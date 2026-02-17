@@ -336,7 +336,7 @@ class TestIndexerIntegration:
         assert files >= 10, f"Expected 10+ files indexed, got {files}"
 
     def test_index_has_correct_embedding_dim(self, arc42_index) -> None:
-        """Embedded vectors should have the correct dimension (384 for all-MiniLM-L6-v2)."""
+        """Embedded vectors should have the correct dimension (768 for nomic-embed-text-v1.5)."""
         import pyarrow as pa
 
         table = arc42_index._table.to_arrow()
@@ -344,7 +344,7 @@ class TestIndexerIntegration:
         vec_field = schema.field("vector")
         # LanceDB stores as FixedSizeList
         dim = vec_field.type.list_size
-        assert dim == 384, f"Expected dim 384, got {dim}"
+        assert dim == 768, f"Expected dim 768, got {dim}"
 
 
 # ── 5. Retrieval Integration (basic) ────────────────────────────────────

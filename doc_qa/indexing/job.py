@@ -321,6 +321,8 @@ class IndexingJob:
             chunk_size = self.config.indexing.chunk_size
             chunk_overlap = self.config.indexing.chunk_overlap
             min_chunk_size = self.config.indexing.min_chunk_size
+            chunking_strategy = self.config.indexing.chunking_strategy
+            embedding_model = self.config.indexing.embedding_model
 
             # Parse and chunk files in parallel, then batch-insert embeddings.
             # This gives ~3-4x speedup over sequential processing.
@@ -351,6 +353,8 @@ class IndexingJob:
                             chunk_size,
                             chunk_overlap,
                             min_chunk_size,
+                            chunking_strategy,
+                            embedding_model,
                         )
                         af = asyncio.wrap_future(cf, loop=loop)
                         async_futures[af] = str(fp)
@@ -486,6 +490,8 @@ def _parse_and_chunk(
     chunk_size: int,
     chunk_overlap: int,
     min_chunk_size: int,
+    chunking_strategy: str = "paragraph",
+    embedding_model: str = "nomic-ai/nomic-embed-text-v1.5",
 ) -> dict[str, Any]:
     """Parse and chunk a single file (CPU-only, no embedding or DB writes).
 
@@ -504,6 +510,8 @@ def _parse_and_chunk(
             max_tokens=chunk_size,
             overlap_tokens=chunk_overlap,
             min_tokens=min_chunk_size,
+            chunking_strategy=chunking_strategy,
+            embedding_model=embedding_model,
         )
         if not chunks:
             return {"chunks": [], "sections": len(sections), "skipped": True, "file_hash": ""}
