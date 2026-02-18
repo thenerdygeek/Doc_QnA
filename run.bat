@@ -109,6 +109,6 @@ echo  Open http://127.0.0.1:8000 in your browser.
 echo  Press Ctrl+C to stop.
 echo.
 
-python -m doc_qa serve --log-level INFO
+python -m doc_qa --log-level INFO serve
 
 pause
