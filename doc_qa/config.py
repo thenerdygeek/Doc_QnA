@@ -189,10 +189,12 @@ def _apply_dict(target: Any, data: dict[str, Any]) -> None:
 
 
 def resolve_db_path(config: AppConfig, repo_path: str) -> str:
-    """Resolve db_path relative to repo_path if not absolute."""
+    """Resolve db_path relative to the project root (not the repo being indexed)."""
     db_path = config.indexing.db_path
     if not Path(db_path).is_absolute():
-        db_path = str(Path(repo_path) / db_path)
+        # Project root: 2 levels up from this file (config.py → doc_qa/ → doc_qa_tool/)
+        project_root = Path(__file__).resolve().parent.parent
+        db_path = str(project_root / db_path)
     return db_path
 
 
