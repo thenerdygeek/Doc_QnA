@@ -574,7 +574,7 @@ def _parse_and_chunk(
         file_hash = _compute_file_hash(file_path)
         doc_date = extract_doc_date(file_path)
         t_total = time.time() - t_start
-        logger.info(
+        logger.warning(
             "[PERF] File %s — parse=%.2fs chunk=%.2fs total=%.2fs (%d sections, %d chunks, strategy=%s)",
             file_path, t_parse, t_chunk, t_total, len(sections), len(chunks), chunking_strategy,
         )
