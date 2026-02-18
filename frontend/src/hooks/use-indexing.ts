@@ -163,6 +163,13 @@ export function useIndexing(): UseIndexingReturn {
   );
 
   const cancel = useCallback(() => {
+    // Immediately update UI to "cancelled" — don't wait for the backend
+    // SSE event (which can't arrive since we're about to abort the stream).
+    setState((prev) =>
+      prev.phase === "running"
+        ? { ...prev, phase: "cancelled", state: "cancelled" }
+        : prev,
+    );
     abortRef.current?.abort();
     api.indexing.cancel().catch(() => {
       // Best-effort — SSE abort already sent

@@ -377,9 +377,14 @@ class IndexingJob:
                         self._check_cancelled()
                         # Wait for at least one future to complete — yields
                         # control back to the event loop so SSE can flush.
+                        # Timeout ensures cancel is checked every 2s even
+                        # when futures are slow (e.g. HF Hub timeouts).
                         done, pending = await asyncio.wait(
                             pending, return_when=asyncio.FIRST_COMPLETED,
+                            timeout=2.0,
                         )
+                        if not done:
+                            continue  # Timeout — re-check cancel flag
 
                         for async_fut in done:
                             file_path = async_futures[async_fut]
