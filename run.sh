@@ -91,6 +91,14 @@ else
     echo " Cody endpoint: https://sourcegraph.com (default)"
 fi
 
+# ── Enable offline mode if bundled models exist ─────────────────
+if [ -d "data/models" ]; then
+    export HF_HUB_OFFLINE=1
+    echo " Bundled models found — offline mode enabled (no internet needed)"
+else
+    echo " No bundled models — will download on first use (requires internet)"
+fi
+
 # ── Start server ──────────────────────────────────────────────
 echo ""
 echo " Starting Doc QA server..."

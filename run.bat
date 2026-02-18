@@ -102,6 +102,14 @@ if defined SRC_ENDPOINT (
     echo  Cody endpoint: https://sourcegraph.com
 )
 
+REM ── Enable offline mode if bundled models exist ─────────────────
+if exist "data\models" (
+    set HF_HUB_OFFLINE=1
+    echo  Bundled models found — offline mode enabled (no internet needed)
+) else (
+    echo  No bundled models — will download on first use (requires internet)
+)
+
 REM ── Start server ──────────────────────────────────────────────
 echo.
 echo  Starting Doc QA server...
