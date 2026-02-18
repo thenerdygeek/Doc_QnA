@@ -26,14 +26,28 @@ def _get_cross_encoder(model_name: str):
     with _ce_lock:
         if _ce_model is not None and _ce_model_name == model_name:
             return _ce_model
+
+        # Enforce offline mode — no network calls for model downloads.
+        # Models must be pre-downloaded via `doc-qa bundle-models`.
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+        os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
         from sentence_transformers import CrossEncoder
 
         cache_dir = os.environ.get(
             "FASTEMBED_CACHE_PATH",
             str(Path(__file__).resolve().parent.parent.parent / "data" / "models"),
         )
-        logger.info("Loading cross-encoder: %s", model_name)
-        _ce_model = CrossEncoder(model_name, cache_folder=cache_dir)
+        logger.info("Loading cross-encoder: %s (offline mode)", model_name)
+        try:
+            _ce_model = CrossEncoder(model_name, cache_folder=cache_dir)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Cross-encoder model '{model_name}' not found in cache.\n"
+                f"Cache dir: {cache_dir}\n\n"
+                "Run 'doc-qa bundle-models' on a machine with internet access\n"
+                "to pre-download all required models."
+            ) from exc
         _ce_model_name = model_name
         return _ce_model
 

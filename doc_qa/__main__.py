@@ -556,18 +556,20 @@ def cmd_feedback_export(args: argparse.Namespace) -> None:
 
 
 def cmd_bundle_models(args: argparse.Namespace) -> None:
-    """Pre-download both embedding models for offline deployment."""
+    """Pre-download all ML models for offline deployment."""
     from doc_qa.indexing.embedder import _get_model, embed_texts, get_cache_dir
 
-    models = [
+    embedding_models = [
         "sentence-transformers/all-MiniLM-L6-v2",
         "nomic-ai/nomic-embed-text-v1.5",
     ]
 
     cache_dir = get_cache_dir()
-    print(f"Bundling embedding models into: {cache_dir}\n")
+    print(f"Bundling models into: {cache_dir}\n")
 
-    for model_name in models:
+    # ── Embedding models ──
+    print("=== Embedding Models ===\n")
+    for model_name in embedding_models:
         print(f"── {model_name} ──")
         try:
             _ensure_embedding_model(model_name)
@@ -576,6 +578,20 @@ def cmd_bundle_models(args: argparse.Namespace) -> None:
         except SystemExit:
             print(f"  FAILED — see errors above.\n")
             sys.exit(1)
+
+    # ── Cross-encoder reranker model ──
+    print("=== Cross-Encoder Reranker ===\n")
+    cross_encoder_model = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    print(f"── {cross_encoder_model} ──")
+    try:
+        from sentence_transformers import CrossEncoder
+
+        ce = CrossEncoder(cross_encoder_model, cache_folder=cache_dir)
+        scores = ce.predict([["test query", "test document"]]).tolist()
+        print(f"  Verified (score={scores[0]:.3f})\n")
+    except Exception as e:
+        print(f"  FAILED — {e}\n")
+        sys.exit(1)
 
     print("All models bundled successfully.")
     print(f"Cache: {cache_dir}")
