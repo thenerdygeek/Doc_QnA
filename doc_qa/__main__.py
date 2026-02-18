@@ -559,6 +559,10 @@ def cmd_bundle_models(args: argparse.Namespace) -> None:
     """Pre-download all ML models for offline deployment."""
     from doc_qa.indexing.embedder import _get_model, embed_texts, get_cache_dir
 
+    # Ensure offline flags are OFF — we need internet to download models
+    os.environ.pop("HF_HUB_OFFLINE", None)
+    os.environ.pop("TRANSFORMERS_OFFLINE", None)
+
     embedding_models = [
         "sentence-transformers/all-MiniLM-L6-v2",
         "nomic-ai/nomic-embed-text-v1.5",
@@ -572,7 +576,11 @@ def cmd_bundle_models(args: argparse.Namespace) -> None:
     for model_name in embedding_models:
         print(f"── {model_name} ──")
         try:
+            # _ensure_embedding_model sets HF_HUB_OFFLINE=1 after success —
+            # clear it so the next model can still download
             _ensure_embedding_model(model_name)
+            os.environ.pop("HF_HUB_OFFLINE", None)
+            os.environ.pop("TRANSFORMERS_OFFLINE", None)
             vecs = embed_texts(["test"], model_name=model_name)
             print(f"  Verified (dim={len(vecs[0])})\n")
         except SystemExit:
