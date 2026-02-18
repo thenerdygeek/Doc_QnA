@@ -577,18 +577,25 @@ def cmd_bundle_models(args: argparse.Namespace) -> None:
     for model_name in embedding_models:
         print(f"── {model_name} ──")
         try:
-            # _ensure_embedding_model sets HF_HUB_OFFLINE=1 after success —
-            # clear it so the next model can still download
             _ensure_embedding_model(model_name)
+            # Clear offline flags after EVERY step — both _ensure_embedding_model
+            # (line 380) and embed_texts → _get_model (embedder.py line 189)
+            # set HF_HUB_OFFLINE=1 when they find local files
             os.environ.pop("HF_HUB_OFFLINE", None)
             os.environ.pop("TRANSFORMERS_OFFLINE", None)
             vecs = embed_texts(["test"], model_name=model_name)
+            os.environ.pop("HF_HUB_OFFLINE", None)
+            os.environ.pop("TRANSFORMERS_OFFLINE", None)
             print(f"  Verified (dim={len(vecs[0])})\n")
         except SystemExit:
             print(f"  FAILED — see errors above.\n")
             sys.exit(1)
 
     # ── Cross-encoder reranker model ──
+    # Clear offline flags again (embed_texts → _get_model re-sets them)
+    os.environ.pop("HF_HUB_OFFLINE", None)
+    os.environ.pop("TRANSFORMERS_OFFLINE", None)
+
     print("=== Cross-Encoder Reranker ===\n")
     cross_encoder_model = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     print(f"── {cross_encoder_model} ──")
