@@ -5,8 +5,6 @@ REM First run: creates venv, installs dependencies, copies config.
 REM Subsequent runs: just starts the server.
 REM ────────────────────────────────────────────────────────────────
 
-setlocal enabledelayedexpansion
-
 cd /d "%~dp0"
 
 echo.
@@ -31,50 +29,51 @@ for /f "tokens=1,2 delims=." %%a in ("%PYVER%") do (
     set PYMAJOR=%%a
     set PYMINOR=%%b
 )
-if %PYMAJOR% lss 3 (
-    echo  [ERROR] Python 3.11+ required, found %PYVER%.
-    pause
-    exit /b 1
-)
-if %PYMAJOR% equ 3 if %PYMINOR% lss 11 (
-    echo  [ERROR] Python 3.11+ required, found %PYVER%.
-    pause
-    exit /b 1
-)
+if %PYMAJOR% lss 3 goto :pyver_fail
+if %PYMAJOR% equ 3 if %PYMINOR% lss 11 goto :pyver_fail
 echo  Python %PYVER% OK
+goto :pyver_ok
+
+:pyver_fail
+echo  [ERROR] Python 3.11+ required, found %PYVER%.
+pause
+exit /b 1
+
+:pyver_ok
 
 REM ── Create virtual environment (first run) ────────────────────
-if not exist ".venv\Scripts\activate.bat" (
-    echo.
-    echo  Creating virtual environment...
-    python -m venv .venv
-    if %errorlevel% neq 0 (
-        echo  [ERROR] Failed to create virtual environment.
-        pause
-        exit /b 1
-    )
-    echo  Virtual environment created.
+if exist ".venv\Scripts\activate.bat" goto :venv_ok
+echo.
+echo  Creating virtual environment...
+python -m venv .venv
+if %errorlevel% neq 0 (
+    echo  [ERROR] Failed to create virtual environment.
+    pause
+    exit /b 1
 )
+echo  Virtual environment created.
+:venv_ok
 
 REM ── Activate venv ─────────────────────────────────────────────
 call .venv\Scripts\activate.bat
 
 REM ── Install / upgrade dependencies (first run or update) ──────
-if not exist ".venv\.installed" (
-    echo.
-    echo  Installing dependencies (this may take a few minutes)...
-    pip install --quiet --upgrade pip
-    pip install -e .
-    if %errorlevel% neq 0 (
-        echo  [ERROR] Failed to install dependencies.
-        pause
-        exit /b 1
-    )
-    echo installed> .venv\.installed
-    echo  Dependencies installed.
-) else (
-    echo  Dependencies already installed. Delete .venv\.installed to force reinstall.
+if exist ".venv\.installed" goto :deps_ok
+echo.
+echo  Installing dependencies (this may take a few minutes)...
+pip install --quiet --upgrade pip
+pip install -e .
+if %errorlevel% neq 0 (
+    echo  [ERROR] Failed to install dependencies.
+    pause
+    exit /b 1
 )
+echo installed> .venv\.installed
+echo  Dependencies installed.
+goto :deps_done
+:deps_ok
+echo  Dependencies already installed. Delete .venv\.installed to force reinstall.
+:deps_done
 
 REM ── Copy example config (first run) ───────────────────────────
 if not exist "config.yaml" (
@@ -100,7 +99,7 @@ if defined SRC_ACCESS_TOKEN (
 if defined SRC_ENDPOINT (
     echo  Cody endpoint: %SRC_ENDPOINT%
 ) else (
-    echo  Cody endpoint: https://sourcegraph.com (default^)
+    echo  Cody endpoint: https://sourcegraph.com
 )
 
 REM ── Start server ──────────────────────────────────────────────
