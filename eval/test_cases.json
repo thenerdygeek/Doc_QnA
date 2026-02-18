@@ -1,0 +1,544 @@
+{
+  "test_cases": [
+    {
+      "question": "What is arc42?",
+      "relevant_files": ["about-arc42.adoc", "arc42-template.adoc"],
+      "relevant_keywords": ["arc42", "template", "architecture", "documentation"],
+      "difficulty": "easy",
+      "description": "Basic factual — overview files are valid hits",
+      "relevance_grades": {"about-arc42.adoc": 2, "arc42-template.adoc": 1},
+      "relevant_sections": ["About arc42"]
+    },
+    {
+      "question": "What are the quality requirements in arc42?",
+      "relevant_files": ["10_quality_requirements.adoc", "arc42-template.adoc"],
+      "relevant_keywords": ["quality", "requirements", "ISO 25010", "scenarios"],
+      "difficulty": "easy",
+      "description": "Direct section lookup — wrapper file is partial match",
+      "relevance_grades": {"10_quality_requirements.adoc": 2, "arc42-template.adoc": 1},
+      "relevant_sections": ["Quality Requirements"]
+    },
+    {
+      "question": "What terms are defined in the arc42 glossary?",
+      "relevant_files": ["12_glossary.adoc", "arc42-template.adoc"],
+      "relevant_keywords": ["glossary", "terms", "definitions", "terminology"],
+      "difficulty": "easy",
+      "description": "Glossary section lookup",
+      "relevance_grades": {"12_glossary.adoc": 2, "arc42-template.adoc": 1},
+      "relevant_sections": ["Glossary"]
+    },
+    {
+      "question": "How do I run Spring Petclinic locally?",
+      "relevant_files": ["README.md"],
+      "relevant_keywords": ["mvnw", "gradlew", "spring-boot:run", "bootRun", "localhost:8080"],
+      "difficulty": "easy",
+      "description": "Direct procedural question answered in Petclinic README",
+      "relevance_grades": {"README.md": 2},
+      "relevant_sections": ["Running Petclinic locally"]
+    },
+    {
+      "question": "What database does Spring Petclinic use by default?",
+      "relevant_files": ["README.md"],
+      "relevant_keywords": ["H2", "in-memory", "database", "MySQL", "PostgreSQL"],
+      "difficulty": "easy",
+      "description": "Simple factual question about default database",
+      "relevance_grades": {"README.md": 2},
+      "relevant_sections": ["Database configuration"]
+    },
+    {
+      "question": "How do I install docToolchain?",
+      "relevant_files": ["20_install.adoc", "010_Install.adoc"],
+      "relevant_keywords": ["install", "dtcw", "SDKMAN", "download", "Docker"],
+      "difficulty": "easy",
+      "description": "Installation instructions lookup",
+      "relevance_grades": {"20_install.adoc": 2, "010_Install.adoc": 2},
+      "relevant_sections": ["Install docToolchain"]
+    },
+    {
+      "question": "What is docToolchain?",
+      "relevant_files": ["20_what-is-doctoolchain.adoc", "README.adoc", "10_about-the-project.adoc", "LLM.md"],
+      "relevant_keywords": ["docToolchain", "docs-as-code", "documentation", "AsciiDoc"],
+      "difficulty": "easy",
+      "description": "Basic project description — multiple overview files valid",
+      "relevance_grades": {"20_what-is-doctoolchain.adoc": 2, "README.adoc": 1, "10_about-the-project.adoc": 1, "LLM.md": 1},
+      "relevant_sections": ["What is docToolchain"]
+    },
+    {
+      "question": "What is the mainConfigFile setting in docToolchain?",
+      "relevant_files": ["30_config.adoc"],
+      "relevant_keywords": ["mainConfigFile", "docDir", "config", "properties"],
+      "difficulty": "medium",
+      "description": "Specific config parameter lookup — more targeted than generic 'configure'",
+      "relevance_grades": {"30_config.adoc": 2},
+      "relevant_sections": ["Configuration"]
+    },
+    {
+      "question": "What are the building blocks in arc42 architecture documentation?",
+      "relevant_files": ["05_building_block_view.adoc", "arc42-template.adoc"],
+      "relevant_keywords": ["building block", "white box", "black box", "decomposition", "level"],
+      "difficulty": "medium",
+      "description": "Building block concept — wrapper file is partial match",
+      "relevance_grades": {"05_building_block_view.adoc": 2, "arc42-template.adoc": 1},
+      "relevant_sections": ["Building Block View"]
+    },
+    {
+      "question": "What is the difference between business context and technical context in arc42?",
+      "relevant_files": ["03_context_and_scope.adoc"],
+      "relevant_keywords": ["business context", "technical context", "scope", "boundary", "external"],
+      "difficulty": "medium",
+      "description": "Comparison within a single arc42 chapter",
+      "relevance_grades": {"03_context_and_scope.adoc": 2},
+      "relevant_sections": ["Context and Scope"]
+    },
+    {
+      "question": "How do I publish documentation to Confluence using docToolchain?",
+      "relevant_files": ["03_task_publishToConfluence.adoc", "070_publishToConfluence.adoc"],
+      "relevant_keywords": ["Confluence", "publish", "export", "Atlassian", "wiki"],
+      "difficulty": "medium",
+      "description": "Task-specific how-to across task docs and tutorial",
+      "relevance_grades": {"03_task_publishToConfluence.adoc": 2, "070_publishToConfluence.adoc": 2},
+      "relevant_sections": ["publishToConfluence"]
+    },
+    {
+      "question": "What is the generateHTML task in docToolchain and how do I run it?",
+      "relevant_files": ["03_task_generateHTML.adoc", "030_generateHTML.adoc", "20_what-is-doctoolchain.adoc", "LLM.md"],
+      "relevant_keywords": ["generateHTML", "HTML", "AsciiDoctor", "task"],
+      "difficulty": "medium",
+      "description": "HTML generation — overview files that mention it are partial hits",
+      "relevance_grades": {"03_task_generateHTML.adoc": 2, "030_generateHTML.adoc": 2, "20_what-is-doctoolchain.adoc": 1, "LLM.md": 1},
+      "relevant_sections": ["generateHTML"]
+    },
+    {
+      "question": "How do I generate a PDF from AsciiDoc using docToolchain generatePDF?",
+      "relevant_files": ["03_task_generatePDF.adoc", "LLM.md", "20_what-is-doctoolchain.adoc"],
+      "relevant_keywords": ["generatePDF", "PDF", "AsciiDoctor", "task"],
+      "difficulty": "medium",
+      "description": "PDF generation — overview files that mention it are partial hits",
+      "relevance_grades": {"03_task_generatePDF.adoc": 2, "LLM.md": 1, "20_what-is-doctoolchain.adoc": 1},
+      "relevant_sections": ["generatePDF"]
+    },
+    {
+      "question": "What does the deployment view describe in arc42?",
+      "relevant_files": ["07_deployment_view.adoc", "arc42-template.adoc"],
+      "relevant_keywords": ["deployment", "infrastructure", "topology", "hardware", "environment"],
+      "difficulty": "medium",
+      "description": "Deployment chapter — wrapper is partial match",
+      "relevance_grades": {"07_deployment_view.adoc": 2, "arc42-template.adoc": 1},
+      "relevant_sections": ["Deployment View"]
+    },
+    {
+      "question": "How do I set up MySQL for Spring Petclinic?",
+      "relevant_files": ["README.md"],
+      "relevant_keywords": ["MySQL", "docker", "container", "docker-compose", "spring.profiles.active"],
+      "difficulty": "medium",
+      "description": "Database setup from README",
+      "relevance_grades": {"README.md": 2},
+      "relevant_sections": ["Database configuration"]
+    },
+    {
+      "question": "How do I build a Docker container for Spring Petclinic?",
+      "relevant_files": ["README.md"],
+      "relevant_keywords": ["Docker", "container", "build-image", "spring-boot"],
+      "difficulty": "medium",
+      "description": "Container build instructions from README",
+      "relevance_grades": {"README.md": 2},
+      "relevant_sections": ["Building a Container"]
+    },
+    {
+      "question": "What architecture decisions should be documented and how?",
+      "relevant_files": ["09_architecture_decisions.adoc", "arc42-template.adoc"],
+      "relevant_keywords": ["ADR", "architecture decision", "record", "decision"],
+      "difficulty": "medium",
+      "description": "ADR concept from arc42",
+      "relevance_grades": {"09_architecture_decisions.adoc": 2, "arc42-template.adoc": 1},
+      "relevant_sections": ["Architecture Decisions"]
+    },
+    {
+      "question": "What are the cross-cutting concepts in arc42?",
+      "relevant_files": ["08_concepts.adoc", "arc42-template.adoc"],
+      "relevant_keywords": ["cross-cutting", "concepts", "patterns", "security", "persistence"],
+      "difficulty": "medium",
+      "description": "Cross-cutting concepts chapter",
+      "relevance_grades": {"08_concepts.adoc": 2, "arc42-template.adoc": 1},
+      "relevant_sections": ["Cross-cutting Concepts"]
+    },
+    {
+      "question": "What runtime scenarios does arc42 describe?",
+      "relevant_files": ["06_runtime_view.adoc", "arc42-template.adoc"],
+      "relevant_keywords": ["runtime", "sequence", "interaction", "scenario", "dynamic"],
+      "difficulty": "medium",
+      "description": "Runtime view chapter",
+      "relevance_grades": {"06_runtime_view.adoc": 2, "arc42-template.adoc": 1},
+      "relevant_sections": ["Runtime View"]
+    },
+    {
+      "question": "What technical risks should be documented in arc42?",
+      "relevant_files": ["11_technical_risks.adoc", "arc42-template.adoc"],
+      "relevant_keywords": ["risk", "technical debt", "mitigation"],
+      "difficulty": "medium",
+      "description": "Risk documentation chapter",
+      "relevance_grades": {"11_technical_risks.adoc": 2, "arc42-template.adoc": 1},
+      "relevant_sections": ["Technical Risks"]
+    },
+    {
+      "question": "What is the solution strategy section of arc42 about?",
+      "relevant_files": ["04_solution_strategy.adoc", "arc42-template.adoc"],
+      "relevant_keywords": ["strategy", "approach", "tactics", "technology", "quality"],
+      "difficulty": "medium",
+      "description": "Solution strategy chapter",
+      "relevance_grades": {"04_solution_strategy.adoc": 2, "arc42-template.adoc": 1},
+      "relevant_sections": ["Solution Strategy"]
+    },
+    {
+      "question": "How do I export Jira issues using docToolchain?",
+      "relevant_files": ["03_task_exportJiraIssues.adoc", "03_task_exportJiraSprintChangelog.adoc", "LLM.md"],
+      "relevant_keywords": ["Jira", "export", "issues", "Atlassian"],
+      "difficulty": "medium",
+      "description": "Jira integration — sprint changelog task and LLM guide also cover Jira",
+      "relevance_grades": {"03_task_exportJiraIssues.adoc": 2, "03_task_exportJiraSprintChangelog.adoc": 1, "LLM.md": 1},
+      "relevant_sections": ["exportJiraIssues"]
+    },
+    {
+      "question": "How do I export Enterprise Architect diagrams with docToolchain?",
+      "relevant_files": ["03_task_exportEA.adoc", "20_what-is-doctoolchain.adoc", "LLM.md"],
+      "relevant_keywords": ["Enterprise Architect", "EA", "export", "diagrams"],
+      "difficulty": "medium",
+      "description": "EA export — overview files mention EA integration",
+      "relevance_grades": {"03_task_exportEA.adoc": 2, "20_what-is-doctoolchain.adoc": 1, "LLM.md": 1},
+      "relevant_sections": ["exportEA"]
+    },
+    {
+      "question": "How do I use diagrams.net with docToolchain?",
+      "relevant_files": ["100_diagrams.net.adoc", "03_task_exportDrawIo.adoc", "20_what-is-doctoolchain.adoc"],
+      "relevant_keywords": ["diagrams.net", "drawio", "draw.io", "export"],
+      "difficulty": "medium",
+      "description": "Diagrams.net integration — overview mentions draw.io support",
+      "relevance_grades": {"100_diagrams.net.adoc": 2, "03_task_exportDrawIo.adoc": 1, "20_what-is-doctoolchain.adoc": 1},
+      "relevant_sections": ["diagrams.net"]
+    },
+    {
+      "question": "How do I set up multiple repositories with docToolchain?",
+      "relevant_files": ["050_multipleRepositories.adoc", "150_multiRepoMicrositeTipsAndTricks.adoc"],
+      "relevant_keywords": ["multiple", "repositories", "multi-repo", "microsite"],
+      "difficulty": "medium",
+      "description": "Multi-repo setup",
+      "relevance_grades": {"050_multipleRepositories.adoc": 2, "150_multiRepoMicrositeTipsAndTricks.adoc": 1},
+      "relevant_sections": ["Multiple Repositories"]
+    },
+    {
+      "question": "What stakeholders should be documented in the arc42 introduction?",
+      "relevant_files": ["01_introduction_and_goals.adoc", "arc42-template.adoc"],
+      "relevant_keywords": ["stakeholders", "concerns", "expectations", "role"],
+      "difficulty": "medium",
+      "description": "Stakeholder section — wrapper is partial match",
+      "relevance_grades": {"01_introduction_and_goals.adoc": 2, "arc42-template.adoc": 1},
+      "relevant_sections": ["Introduction and Goals"]
+    },
+    {
+      "question": "How do I use PostgreSQL instead of H2 in Spring Petclinic?",
+      "relevant_files": ["README.md"],
+      "relevant_keywords": ["PostgreSQL", "postgres", "docker-compose", "profile"],
+      "difficulty": "medium",
+      "description": "PostgreSQL setup from README",
+      "relevance_grades": {"README.md": 2},
+      "relevant_sections": ["Database configuration"]
+    },
+    {
+      "question": "What are the architecture constraints and how do they differ from quality requirements?",
+      "relevant_files": ["02_architecture_constraints.adoc", "10_quality_requirements.adoc", "arc42-template.adoc"],
+      "relevant_keywords": ["constraints", "quality", "requirements", "organizational", "technical"],
+      "difficulty": "hard",
+      "description": "Comparison across two arc42 chapters",
+      "relevance_grades": {"02_architecture_constraints.adoc": 2, "10_quality_requirements.adoc": 2, "arc42-template.adoc": 1},
+      "relevant_sections": ["Architecture Constraints", "Quality Requirements"]
+    },
+    {
+      "question": "How do I set up a complete CI/CD pipeline for documentation with docToolchain?",
+      "relevant_files": ["060_CI-CD-Deployment.adoc", "160_EnterpriseTipsAndTricks.adoc", "03_task_generateHTML.adoc", "03_task_generatePDF.adoc", "03_task_generateSite.adoc"],
+      "relevant_keywords": ["CI/CD", "pipeline", "deployment", "automation", "continuous"],
+      "difficulty": "hard",
+      "description": "Multi-step CI/CD — EnterpriseTips has CI/CD section with demo links",
+      "relevance_grades": {"060_CI-CD-Deployment.adoc": 2, "160_EnterpriseTipsAndTricks.adoc": 1, "03_task_generateHTML.adoc": 1, "03_task_generatePDF.adoc": 1, "03_task_generateSite.adoc": 1},
+      "relevant_sections": ["CI/CD Deployment"]
+    },
+    {
+      "question": "How do the static building block view and dynamic runtime view complement each other?",
+      "relevant_files": ["05_building_block_view.adoc", "06_runtime_view.adoc", "arc42-template.adoc"],
+      "relevant_keywords": ["building block", "runtime", "static", "dynamic", "view"],
+      "difficulty": "hard",
+      "description": "Synthesis comparing two viewpoints",
+      "relevance_grades": {"05_building_block_view.adoc": 2, "06_runtime_view.adoc": 2, "arc42-template.adoc": 1},
+      "relevant_sections": ["Building Block View", "Runtime View"]
+    },
+    {
+      "question": "How do I create and publish presentations using docToolchain and reveal.js?",
+      "relevant_files": ["110_presentations_with_revealjs.adoc", "03_task_generateDeck.adoc"],
+      "relevant_keywords": ["reveal.js", "presentation", "slides", "deck", "generateDeck"],
+      "difficulty": "medium",
+      "description": "Presentation workflow",
+      "relevance_grades": {"110_presentations_with_revealjs.adoc": 2, "03_task_generateDeck.adoc": 1},
+      "relevant_sections": ["Presentations with reveal.js"]
+    },
+    {
+      "question": "What scripting languages and testing frameworks does docToolchain use?",
+      "relevant_files": ["ADR-1-Scripting-Languages.adoc", "020_run_tests.adoc"],
+      "relevant_keywords": ["Groovy", "Spock", "BATS", "testing", "scripting"],
+      "difficulty": "hard",
+      "description": "Cross-referencing ADRs and dev docs — ADR-3 is a stub, 020_run_tests has Spock content",
+      "relevance_grades": {"ADR-1-Scripting-Languages.adoc": 2, "020_run_tests.adoc": 2},
+      "relevant_sections": ["ADR Scripting Languages", "Run Tests"]
+    },
+    {
+      "question": "How do I debug issues when docToolchain tasks fail?",
+      "relevant_files": ["040_debugging.adoc", "50_Frequently_asked_Questions.adoc"],
+      "relevant_keywords": ["debug", "troubleshoot", "error", "fix"],
+      "difficulty": "medium",
+      "description": "Debugging workflow",
+      "relevance_grades": {"040_debugging.adoc": 2, "50_Frequently_asked_Questions.adoc": 1},
+      "relevant_sections": ["Debugging", "FAQ"]
+    },
+    {
+      "question": "What are the differences between white box and black box in the building block view?",
+      "relevant_files": ["05_building_block_view.adoc", "arc42-template.adoc"],
+      "relevant_keywords": ["white box", "black box", "contained", "interfaces"],
+      "difficulty": "hard",
+      "description": "Deep conceptual question",
+      "relevance_grades": {"05_building_block_view.adoc": 2, "arc42-template.adoc": 1},
+      "relevant_sections": ["Building Block View"]
+    },
+    {
+      "question": "How do I create a custom task in docToolchain?",
+      "relevant_files": ["150_task_createTask.adoc"],
+      "relevant_keywords": ["createTask", "custom", "task", "Gradle"],
+      "difficulty": "medium",
+      "description": "Custom task creation",
+      "relevance_grades": {"150_task_createTask.adoc": 2},
+      "relevant_sections": ["createTask"]
+    },
+    {
+      "question": "What IDE setup is needed for Spring Petclinic development?",
+      "relevant_files": ["README.md"],
+      "relevant_keywords": ["IDE", "Eclipse", "IntelliJ", "VS Code", "STS"],
+      "difficulty": "medium",
+      "description": "IDE setup section",
+      "relevance_grades": {"README.md": 2},
+      "relevant_sections": ["Working with Petclinic in your IDE"]
+    },
+    {
+      "question": "How do I contribute to the docToolchain project?",
+      "relevant_files": ["005_contributing_to_docs.adoc", "30_community.adoc", "CONTRIBUTING.md"],
+      "relevant_keywords": ["contributing", "community", "pull request"],
+      "difficulty": "medium",
+      "description": "Contribution guidelines",
+      "relevance_grades": {"005_contributing_to_docs.adoc": 2, "30_community.adoc": 1, "CONTRIBUTING.md": 1},
+      "relevant_sections": ["Contributing"]
+    },
+    {
+      "question": "What is the complete documentation workflow from writing AsciiDoc to publishing HTML, PDF, and Confluence?",
+      "relevant_files": ["03_task_generateHTML.adoc", "03_task_generatePDF.adoc", "03_task_publishToConfluence.adoc", "20_what-is-doctoolchain.adoc", "LLM.md"],
+      "relevant_keywords": ["HTML", "PDF", "Confluence", "publish", "generate", "workflow"],
+      "difficulty": "hard",
+      "description": "End-to-end pipeline synthesis",
+      "relevance_grades": {"03_task_generateHTML.adoc": 2, "03_task_generatePDF.adoc": 2, "03_task_publishToConfluence.adoc": 2, "20_what-is-doctoolchain.adoc": 1, "LLM.md": 1},
+      "relevant_sections": ["generateHTML", "generatePDF", "publishToConfluence"]
+    },
+    {
+      "question": "What changed in docToolchain version 3.4.2?",
+      "relevant_files": ["3.4.2-release.adoc"],
+      "relevant_keywords": ["3.4.2", "release", "version", "changelog"],
+      "difficulty": "medium",
+      "description": "Specific version release notes — more targeted than range query",
+      "relevance_grades": {"3.4.2-release.adoc": 2},
+      "relevant_sections": ["Release Notes"]
+    },
+    {
+      "question": "How do I set up the docToolchain development environment and run tests?",
+      "relevant_files": ["010_setup_dev_env.adoc", "020_run_tests.adoc"],
+      "relevant_keywords": ["development", "setup", "tests", "Spock", "BATS"],
+      "difficulty": "hard",
+      "description": "Developer onboarding synthesis",
+      "relevance_grades": {"010_setup_dev_env.adoc": 2, "020_run_tests.adoc": 2},
+      "relevant_sections": ["Setup Dev Environment", "Run Tests"]
+    },
+    {
+      "question": "How do I use Kroki for diagram rendering in docToolchain?",
+      "relevant_files": ["170_kroki-configuration.adoc", "kroki-configuration-complete-guide.adoc"],
+      "relevant_keywords": ["Kroki", "diagram", "rendering", "PlantUML"],
+      "difficulty": "medium",
+      "description": "Kroki configuration",
+      "relevance_grades": {"170_kroki-configuration.adoc": 2, "kroki-configuration-complete-guide.adoc": 2},
+      "relevant_sections": ["Kroki Configuration"]
+    },
+    {
+      "question": "What is the self-contained mode in docToolchain?",
+      "relevant_files": ["120_self-contained-dtc.adoc"],
+      "relevant_keywords": ["self-contained", "offline", "airgap"],
+      "difficulty": "medium",
+      "description": "Self-contained mode docs",
+      "relevance_grades": {"120_self-contained-dtc.adoc": 2},
+      "relevant_sections": ["Self-contained docToolchain"]
+    },
+    {
+      "question": "How do I use docToolchain with Docker?",
+      "relevant_files": ["20_install.adoc", "010_Install.adoc"],
+      "relevant_keywords": ["Docker", "container", "dtcw"],
+      "difficulty": "medium",
+      "description": "Docker installation",
+      "relevance_grades": {"20_install.adoc": 2, "010_Install.adoc": 1},
+      "relevant_sections": ["Install", "Docker"]
+    },
+    {
+      "question": "What open source contributions has the Spring Petclinic project made?",
+      "relevant_files": ["README.md"],
+      "relevant_keywords": ["OSS", "open source", "bug fix", "Spring JDBC"],
+      "difficulty": "hard",
+      "description": "Niche section deep in Petclinic README",
+      "relevance_grades": {"README.md": 2},
+      "relevant_sections": ["OSS"]
+    },
+    {
+      "question": "How do I export OpenAPI specifications using docToolchain?",
+      "relevant_files": ["03_task_exportOpenApi.adoc"],
+      "relevant_keywords": ["OpenAPI", "Swagger", "API", "export"],
+      "difficulty": "easy",
+      "description": "Direct OpenAPI task lookup",
+      "relevance_grades": {"03_task_exportOpenApi.adoc": 2},
+      "relevant_sections": ["exportOpenApi"]
+    },
+    {
+      "question": "How do I theme my documentation site in docToolchain?",
+      "relevant_files": ["130_theming.adoc"],
+      "relevant_keywords": ["theme", "theming", "CSS", "customization"],
+      "difficulty": "medium",
+      "description": "Theming tutorial",
+      "relevance_grades": {"130_theming.adoc": 2},
+      "relevant_sections": ["Theming"]
+    },
+    {
+      "question": "What Java version does Spring Petclinic require?",
+      "relevant_files": ["README.md"],
+      "relevant_keywords": ["Java", "17", "version", "prerequisite"],
+      "difficulty": "easy",
+      "description": "Specific factual detail from README",
+      "relevance_grades": {"README.md": 2},
+      "relevant_sections": ["Prerequisites"]
+    },
+    {
+      "question": "What is the dtcw wrapper script and how do I use it?",
+      "relevant_files": ["20_install.adoc", "010_Install.adoc", "LLM.md", "README.adoc"],
+      "relevant_keywords": ["dtcw", "wrapper", "script", "download"],
+      "difficulty": "medium",
+      "description": "Specific tool lookup — dtcw terminology. README.adoc references dtcw.",
+      "relevance_grades": {"20_install.adoc": 2, "010_Install.adoc": 2, "LLM.md": 1, "README.adoc": 1},
+      "relevant_sections": ["Install"]
+    },
+    {
+      "question": "How do I run docToolchain in headless mode without user interaction?",
+      "relevant_files": ["30_config.adoc"],
+      "relevant_keywords": ["headless", "DTC_HEADLESS", "non-interactive", "CI"],
+      "difficulty": "medium",
+      "description": "Specific config feature — headless mode",
+      "relevance_grades": {"30_config.adoc": 2},
+      "relevant_sections": ["Configuration"]
+    },
+    {
+      "question": "How does Spring Petclinic handle CSS compilation with Bootstrap?",
+      "relevant_files": ["README.md"],
+      "relevant_keywords": ["CSS", "SCSS", "Bootstrap", "wro4j", "maven"],
+      "difficulty": "medium",
+      "description": "CSS compilation section in Petclinic README",
+      "relevance_grades": {"README.md": 2},
+      "relevant_sections": ["CSS"]
+    },
+    {
+      "question": "How do I export Excel spreadsheets with docToolchain?",
+      "relevant_files": ["03_task_exportExcel.adoc", "20_what-is-doctoolchain.adoc", "LLM.md"],
+      "relevant_keywords": ["Excel", "export", "spreadsheet"],
+      "difficulty": "easy",
+      "description": "Excel export — overview files list this task",
+      "relevance_grades": {"03_task_exportExcel.adoc": 2, "20_what-is-doctoolchain.adoc": 1, "LLM.md": 1},
+      "relevant_sections": ["exportExcel"]
+    },
+    {
+      "question": "How do I export Visio diagrams using docToolchain?",
+      "relevant_files": ["03_task_exportVisio.adoc"],
+      "relevant_keywords": ["Visio", "export", "diagram"],
+      "difficulty": "easy",
+      "description": "Specific task — Visio export",
+      "relevance_grades": {"03_task_exportVisio.adoc": 2},
+      "relevant_sections": ["exportVisio"]
+    },
+    {
+      "question": "What is the wipeConfluenceSpace task and when should I use it?",
+      "relevant_files": ["03_task_wipeConfluenceSpace.adoc"],
+      "relevant_keywords": ["wipe", "Confluence", "space", "delete", "clean"],
+      "difficulty": "medium",
+      "description": "Specific dangerous task lookup",
+      "relevance_grades": {"03_task_wipeConfluenceSpace.adoc": 2},
+      "relevant_sections": ["wipeConfluenceSpace"]
+    },
+    {
+      "question": "What is the htmlSanityCheck task in docToolchain?",
+      "relevant_files": ["03_task_htmlSanityCheck.adoc"],
+      "relevant_keywords": ["htmlSanityCheck", "sanity", "check", "broken links", "HTML"],
+      "difficulty": "easy",
+      "description": "Specific task — HTML validation",
+      "relevance_grades": {"03_task_htmlSanityCheck.adoc": 2},
+      "relevant_sections": ["htmlSanityCheck"]
+    },
+    {
+      "question": "How do I generate a static documentation site using docToolchain and jBake?",
+      "relevant_files": ["03_task_generateSite.adoc", "040_generateSite.adoc", "130_theming.adoc"],
+      "relevant_keywords": ["generateSite", "jBake", "static site", "microsite"],
+      "difficulty": "medium",
+      "description": "Static site generation — theming file covers jBake site customization",
+      "relevance_grades": {"03_task_generateSite.adoc": 2, "040_generateSite.adoc": 2, "130_theming.adoc": 1},
+      "relevant_sections": ["generateSite"]
+    },
+    {
+      "question": "How do I use the exportMarkdown task in docToolchain?",
+      "relevant_files": ["03_task_exportMarkdown.adoc", "exportMarkdownDocs.md", "_exportMarkdown.md"],
+      "relevant_keywords": ["exportMarkdown", "Markdown", "convert"],
+      "difficulty": "easy",
+      "description": "Markdown export task — multiple files document this task",
+      "relevance_grades": {"03_task_exportMarkdown.adoc": 2, "exportMarkdownDocs.md": 2, "_exportMarkdown.md": 2},
+      "relevant_sections": ["exportMarkdown"]
+    },
+    {
+      "question": "What is the security policy for the docToolchain project?",
+      "relevant_files": ["SECURITY.adoc", "SECURITY.md"],
+      "relevant_keywords": ["security", "vulnerability", "reporting", "policy"],
+      "difficulty": "easy",
+      "description": "Security policy lookup",
+      "relevance_grades": {"SECURITY.adoc": 2, "SECURITY.md": 2},
+      "relevant_sections": ["Security"]
+    },
+    {
+      "question": "What is the Developer Certificate of Origin requirement for Spring Petclinic contributions?",
+      "relevant_files": ["README.md"],
+      "relevant_keywords": ["DCO", "Developer Certificate of Origin", "contributing", "sign-off"],
+      "difficulty": "hard",
+      "description": "Very specific detail buried in contributing section",
+      "relevance_grades": {"README.md": 2},
+      "relevant_sections": ["Contributing"]
+    },
+    {
+      "question": "Who created the arc42 template and when?",
+      "relevant_files": ["about-arc42.adoc", "arc42-template.adoc", "readme.md"],
+      "relevant_keywords": ["Gernot Starke", "Peter Hruschka", "2005", "author", "creator"],
+      "difficulty": "medium",
+      "description": "Factual question about arc42 creators",
+      "relevance_grades": {"about-arc42.adoc": 2, "arc42-template.adoc": 1, "readme.md": 1},
+      "relevant_sections": ["About arc42"]
+    },
+    {
+      "question": "How do I export Structurizr models using docToolchain?",
+      "relevant_files": ["03_task_exportStructurizr.adoc"],
+      "relevant_keywords": ["Structurizr", "C4", "export", "model"],
+      "difficulty": "easy",
+      "description": "Specific task — Structurizr export",
+      "relevance_grades": {"03_task_exportStructurizr.adoc": 2},
+      "relevant_sections": ["exportStructurizr"]
+    }
+  ]
+}

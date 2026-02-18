@@ -33,9 +33,11 @@ retrieval:
   max_history_turns: 10
   context_reorder: true
   enable_hyde: true  # HyDE: generate hypothetical doc, use weighted embedding for better recall
+  enable_query_expansion: true  # LLM-based query expansion with RRF merge (works with HyDE)
+  max_expansion_queries: 3  # number of alternative phrasings to generate
 llm:
-  primary: cody
-  fallback: ollama
+  primary: cody  # Cody w/ Sonnet/Opus models — always primary
+  fallback: ollama  # local fallback only
 cody:
   access_token_env: SRC_ACCESS_TOKEN
   endpoint: https://sourcegraph.com
@@ -63,7 +65,8 @@ generation:
   max_diagram_retries: 3
 verification:
   enable_verification: true
-  enable_crag: false
-  confidence_threshold: 0.4
+  enable_crag: true
+  confidence_threshold: 0.6
+  caveat_threshold: 0.4
   max_crag_rewrites: 2
   abstain_on_low_confidence: true

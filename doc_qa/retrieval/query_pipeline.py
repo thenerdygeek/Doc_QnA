@@ -173,25 +173,34 @@ class QueryPipeline:
         question: str,
         candidate_pool: int,
         min_score: float,
+        use_hyde: bool = False,
     ) -> list[RetrievedChunk]:
         """Retrieve using multiple query variants and merge with RRF.
 
         1. Expand the original question into alternative phrasings via LLM.
-        2. Retrieve independently for each variant.
+        2. For each variant, retrieve candidates (optionally via HyDE).
         3. Merge all result sets using Reciprocal Rank Fusion (RRF).
         4. Deduplicate by chunk_id, keeping highest cumulative RRF score.
         5. Normalize merged scores to [0, 1].
+
+        When *use_hyde* is True, each variant gets a HyDE-enhanced embedding
+        before retrieval.  This combines the vocabulary-matching advantage of
+        HyDE with the terminology-diversity advantage of query expansion.
 
         Args:
             question: The user's original query.
             candidate_pool: Number of candidates to retrieve per variant.
             min_score: Minimum score threshold for initial retrieval.
+            use_hyde: If True, apply HyDE to each variant before retrieval.
 
         Returns:
             Merged and deduplicated list of chunks sorted by score descending,
             limited to *candidate_pool* entries.
         """
-        from doc_qa.retrieval.query_expander import expand_query
+        from doc_qa.retrieval.query_expander import (
+            expand_query,
+            generate_combined_embedding,
+        )
         from doc_qa.retrieval.score_normalizer import normalize_min_max
 
         variants = await expand_query(
@@ -207,9 +216,29 @@ class QueryPipeline:
         chunk_map: dict[str, RetrievedChunk] = {}
 
         for variant in variants:
-            results = self._retriever.search(
-                query=variant, top_k=candidate_pool, min_score=min_score,
-            )
+            if use_hyde:
+                try:
+                    vec = await generate_combined_embedding(
+                        variant, self._llm,
+                        embedding_model=self._embedding_model,
+                        hyde_weight=self._hyde_weight,
+                    )
+                    results = self._retriever.search_by_vector(
+                        vec, top_k=candidate_pool, min_score=min_score,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "HyDE failed for variant '%.40s...', using plain search: %s",
+                        variant, exc,
+                    )
+                    results = self._retriever.search(
+                        query=variant, top_k=candidate_pool, min_score=min_score,
+                    )
+            else:
+                results = self._retriever.search(
+                    query=variant, top_k=candidate_pool, min_score=min_score,
+                )
+
             for rank, chunk in enumerate(results):
                 rrf = 1.0 / (rank + rrf_k)
                 rrf_scores[chunk.chunk_id] = rrf_scores.get(chunk.chunk_id, 0.0) + rrf
@@ -236,8 +265,30 @@ class QueryPipeline:
         """Process a single query through the full pipeline."""
         query_id = uuid.uuid4().hex
 
-        # ── HyDE: Hypothetical Document Embeddings ────────────────
-        if self._enable_hyde:
+        # ── Retrieval strategy ──────────────────────────────────────
+        # Priority: query expansion (with optional HyDE per variant) >
+        #           HyDE-only > standard retrieval.
+        if self._enable_query_expansion:
+            # Multi-query retrieval — applies HyDE per variant when enabled
+            try:
+                candidates = await self._multi_query_retrieve(
+                    question, self._candidate_pool, self._min_score,
+                    use_hyde=self._enable_hyde,
+                )
+                logger.info(
+                    "Multi-query%s retrieved %d candidates.",
+                    "+HyDE" if self._enable_hyde else "",
+                    len(candidates),
+                )
+            except Exception as exc:
+                logger.warning("Query expansion failed, falling back: %s", exc)
+                candidates = self._retriever.search(
+                    query=question,
+                    top_k=self._candidate_pool,
+                    min_score=self._min_score,
+                )
+        elif self._enable_hyde:
+            # HyDE-only path (no query expansion)
             try:
                 from doc_qa.retrieval.query_expander import generate_combined_embedding
                 combined_vec = await generate_combined_embedding(
@@ -248,23 +299,9 @@ class QueryPipeline:
                 candidates = self._retriever.search_by_vector(
                     combined_vec, top_k=self._candidate_pool, min_score=self._min_score,
                 )
-                logger.info("HyDE combined embedding retrieved %d candidates.", len(candidates))
+                logger.info("HyDE-only retrieved %d candidates.", len(candidates))
             except Exception as exc:
                 logger.warning("HyDE failed, falling back to standard retrieval: %s", exc)
-                candidates = self._retriever.search(
-                    query=question,
-                    top_k=self._candidate_pool,
-                    min_score=self._min_score,
-                )
-        elif self._enable_query_expansion:
-            # ── Multi-query retrieval (query expansion + RRF merge) ──
-            try:
-                candidates = await self._multi_query_retrieve(
-                    question, self._candidate_pool, self._min_score,
-                )
-                logger.info("Multi-query retrieved %d candidates.", len(candidates))
-            except Exception as exc:
-                logger.warning("Query expansion failed, falling back: %s", exc)
                 candidates = self._retriever.search(
                     query=question,
                     top_k=self._candidate_pool,

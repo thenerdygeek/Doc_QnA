@@ -132,7 +132,7 @@ class TestHybridRetriever:
 
 class TestRRFScoring:
     def test_rrf_merge_produces_valid_scores(self, populated_index: DocIndex) -> None:
-        """Manual RRF should produce positive scores."""
+        """Manual RRF should produce non-negative normalized scores."""
         retriever = HybridRetriever(
             table=populated_index._table,
             mode="hybrid",
@@ -143,7 +143,8 @@ class TestRRFScoring:
         results = retriever._manual_rrf("authentication login", query_vec, top_k=5, min_score=0.0)
         assert len(results) > 0
         for r in results:
-            assert r.score > 0.0
+            # After min-max normalization, lowest score maps to 0.0
+            assert r.score >= 0.0
 
 
 class TestMetadataBoost:
