@@ -104,10 +104,13 @@ export function ConversationSidebar({
         ref={sidebarRef}
         onKeyDown={open ? handleKeyDown : undefined}
         className={[
-          "flex h-full w-[280px] shrink-0 flex-col border-r border-border/60 bg-card",
-          // Mobile: slide-in overlay
-          "fixed inset-y-0 left-0 z-50 transition-transform duration-200 md:relative md:z-auto md:translate-x-0",
-          open ? "translate-x-0" : "-translate-x-full",
+          "flex h-full shrink-0 flex-col border-r border-border/60 bg-card",
+          // Mobile: fixed overlay with slide. Desktop: in-flow with width transition.
+          "fixed inset-y-0 left-0 z-50 w-[280px] transition-transform duration-200",
+          "md:relative md:z-auto md:translate-x-0 md:transition-[width,border] md:duration-200",
+          open
+            ? "translate-x-0 md:w-[280px]"
+            : "-translate-x-full md:w-0 md:border-r-0 md:overflow-hidden",
         ].join(" ")}
       >
         {/* Header */}

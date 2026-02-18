@@ -41,7 +41,10 @@ export default function App() {
   const settings = useSettings();
   const tour = useTour();
   const indexing = useIndexing();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    // Desktop: start open, mobile: start closed
+    return window.innerWidth >= 768;
+  });
   const isFirstLoad = useRef(true);
   const prefersReduced = useReducedMotion();
   const prevStreamSessionId = useRef<string | null>(null);
@@ -133,7 +136,8 @@ export default function App() {
 
   const handleSelectConversation = useCallback(
     async (id: string) => {
-      setSidebarOpen(false);
+      // Close sidebar on mobile only
+      if (window.innerWidth < 768) setSidebarOpen(false);
       try {
         const conv = await api.conversations.get(id);
         const loaded: Message[] = conv.messages.map((m, i) => ({
@@ -208,9 +212,9 @@ export default function App() {
               <Button
                 variant="ghost"
                 size="icon-sm"
-                onClick={() => setSidebarOpen(true)}
-                aria-label="Open sidebar"
-                className="text-muted-foreground hover:text-foreground md:hidden"
+                onClick={() => setSidebarOpen((v) => !v)}
+                aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
+                className="text-muted-foreground hover:text-foreground"
               >
                 <Menu className="h-4 w-4" />
               </Button>
