@@ -560,7 +560,10 @@ def cmd_bundle_models(args: argparse.Namespace) -> None:
     """Pre-download all ML models for offline deployment."""
     from doc_qa.indexing.embedder import _get_model, embed_texts, get_cache_dir
 
-    # Ensure offline flags are OFF — we need internet to download models
+    # Ensure offline flags are OFF — we need internet to download models.
+    # DOC_QA_BUNDLE_MODE tells _get_model() to skip setting HF_HUB_OFFLINE
+    # even when local model files exist.
+    os.environ["DOC_QA_BUNDLE_MODE"] = "1"
     os.environ.pop("HF_HUB_OFFLINE", None)
     os.environ.pop("TRANSFORMERS_OFFLINE", None)
 

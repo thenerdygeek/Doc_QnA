@@ -185,7 +185,8 @@ def _get_model(model_name: str = "nomic-ai/nomic-embed-text-v1.5") -> object:
         # If model files exist locally, block HF from downloading again.
         # This prevents fastembed from ignoring the GCS layout and
         # starting a slow HuggingFace download.
-        if _has_local_model(cache_dir, model_name):
+        # Skip this guard when bundling (BUNDLE_MODE env var is set).
+        if _has_local_model(cache_dir, model_name) and not os.environ.get("DOC_QA_BUNDLE_MODE"):
             os.environ["HF_HUB_OFFLINE"] = "1"
 
         from fastembed import TextEmbedding
