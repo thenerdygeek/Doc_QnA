@@ -70,3 +70,6 @@ verification:
   caveat_threshold: 0.4
   max_crag_rewrites: 2
   abstain_on_low_confidence: true
+feedback:
+  enable_score_boost: false  # boost/penalize chunk scores based on user feedback
+  boost_max: 0.10  # max absolute score shift from feedback

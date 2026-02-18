@@ -4,9 +4,21 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from doc_qa.parsers.base import ParsedSection, Parser
+
+
+@dataclass
+class ExtractedTable:
+    """A table extracted from a PDF page with structural metadata."""
+
+    markdown: str
+    headers: list[str] = field(default_factory=list)
+    row_count: int = 0
+    col_count: int = 0
+    page_number: int = 0
 
 logger = logging.getLogger(__name__)
 
@@ -47,19 +59,20 @@ class PDFParser(Parser):
             return []
 
     @staticmethod
-    def _extract_tables_from_page(page: object) -> list[str]:
-        """Extract tables from a pdfplumber page and format as markdown.
+    def _extract_tables_from_page(page: object, page_number: int = 0) -> list[ExtractedTable]:
+        """Extract tables from a pdfplumber page with structural metadata.
 
         Uses ``page.extract_tables()`` (pdfplumber built-in) and converts
-        each table to a markdown pipe table.
+        each table to a markdown pipe table with header/row/col metadata.
 
         Args:
             page: A pdfplumber page object.
+            page_number: 1-based page number for metadata.
 
         Returns:
-            List of markdown-formatted table strings.
+            List of ``ExtractedTable`` instances.
         """
-        tables: list[str] = []
+        tables: list[ExtractedTable] = []
         try:
             raw_tables = page.extract_tables()  # type: ignore[attr-defined]
         except Exception:
@@ -72,14 +85,23 @@ class PDFParser(Parser):
             if not raw_table or not raw_table[0]:
                 continue
             md_rows: list[str] = []
+            headers: list[str] = []
             for row_idx, row in enumerate(raw_table):
                 # Replace None cells with empty string
                 cells = [(cell or "").replace("\n", " ").strip() for cell in row]
                 md_rows.append("| " + " | ".join(cells) + " |")
                 # Add header separator after first row
                 if row_idx == 0:
+                    headers = cells
                     md_rows.append("| " + " | ".join("---" for _ in cells) + " |")
-            tables.append("\n".join(md_rows))
+
+            tables.append(ExtractedTable(
+                markdown="\n".join(md_rows),
+                headers=headers,
+                row_count=len(raw_table) - 1,  # exclude header row
+                col_count=len(headers),
+                page_number=page_number,
+            ))
 
         return tables
 
@@ -95,14 +117,16 @@ class PDFParser(Parser):
 
             # First pass: extract all text and try heading detection
             page_texts: list[str] = []
-            for page in pdf.pages:
+            page_table_meta: list[list[ExtractedTable]] = []
+            for page_idx, page in enumerate(pdf.pages):
                 text = page.extract_text() or ""
-                # Extract tables from the page and append as markdown
-                md_tables = self._extract_tables_from_page(page)
+                # Extract tables from the page with metadata
+                extracted = self._extract_tables_from_page(page, page_number=page_idx + 1)
                 page_text = text.strip()
-                if md_tables:
-                    page_text = page_text + "\n\n" + "\n\n".join(md_tables)
+                if extracted:
+                    page_text = page_text + "\n\n" + "\n\n".join(t.markdown for t in extracted)
                 page_texts.append(page_text)
+                page_table_meta.append(extracted)
 
             full_text = "\n\n".join(page_texts)
 
@@ -127,7 +151,10 @@ class PDFParser(Parser):
                         level=1,
                         file_path=fp,
                         file_type="pdf",
-                        metadata=self._make_metadata(text),
+                        metadata=self._make_metadata(
+                            text,
+                            table_meta=page_table_meta[i] if page_table_meta[i] else None,
+                        ),
                     )
                 )
 
@@ -260,7 +287,10 @@ class PDFParser(Parser):
         return []
 
     @staticmethod
-    def _make_metadata(content: str) -> dict[str, str]:
+    def _make_metadata(
+        content: str,
+        table_meta: list[ExtractedTable] | None = None,
+    ) -> dict[str, str]:
         """Build content-type metadata for a PDF section."""
         has_table = any(
             line.strip().startswith("|") and line.strip().endswith("|")
@@ -268,11 +298,25 @@ class PDFParser(Parser):
             if line.strip()
         )
         ct = "table" if has_table else "prose"
-        return {
+        meta: dict[str, str] = {
             "content_type": ct,
             "has_table": str(has_table).lower(),
             "has_code": "false",
         }
+        # Enrich with structural table metadata from ExtractedTable objects
+        if table_meta:
+            all_headers: list[str] = []
+            total_rows = 0
+            total_cols = 0
+            for t in table_meta:
+                all_headers.extend(t.headers)
+                total_rows += t.row_count
+                total_cols = max(total_cols, t.col_count)
+            if all_headers:
+                meta["table_headers"] = ", ".join(dict.fromkeys(all_headers))  # dedupe, preserve order
+                meta["table_rows"] = str(total_rows)
+                meta["table_cols"] = str(total_cols)
+        return meta
 
     @staticmethod
     def _is_heading(line: str) -> bool:

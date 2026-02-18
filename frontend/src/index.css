@@ -548,6 +548,48 @@ html.transitioning *::after {
   opacity: 1;
 }
 
+/* ── Citation badges ─────────────────────────────────────────── */
+.citation-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.35rem;
+  margin: 0 0.1rem;
+  border-radius: 9999px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: oklch(0.98 0 0);
+  background: oklch(0.44 0.18 265);
+  cursor: pointer;
+  vertical-align: super;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  border: none;
+}
+
+.citation-badge:hover {
+  transform: scale(1.15);
+  box-shadow: 0 0 0 3px oklch(0.44 0.18 265 / 0.2);
+}
+
+.dark .citation-badge {
+  background: oklch(0.70 0.14 265);
+  color: oklch(0.13 0.028 265);
+}
+
+.dark .citation-badge:hover {
+  box-shadow: 0 0 0 3px oklch(0.70 0.14 265 / 0.25);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .citation-badge:hover {
+    transform: none;
+  }
+}
+
 /* ── Scrollbar ───────────────────────────────────────────────── */
 ::-webkit-scrollbar {
   width: 6px;

@@ -4,9 +4,11 @@ import type { PipelineStatus } from "@/types/sse";
 
 const PIPELINE_STEPS: { key: PipelineStatus; label: string; short: string }[] = [
   { key: "classifying", label: "Classifying", short: "Classify" },
+  { key: "reformulating", label: "Reformulating", short: "Rewrite" },
   { key: "retrieving", label: "Searching", short: "Search" },
   { key: "grading", label: "Grading", short: "Grade" },
   { key: "generating", label: "Generating", short: "Generate" },
+  { key: "reasoning", label: "Deep reasoning", short: "Reason" },
   { key: "verifying", label: "Verifying", short: "Verify" },
 ];
 

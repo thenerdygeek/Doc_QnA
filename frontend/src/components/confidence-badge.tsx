@@ -8,13 +8,17 @@ interface ConfidenceBadgeProps {
 
 export function ConfidenceBadge({ passed, confidence }: ConfidenceBadgeProps) {
   const pct = Math.round(confidence * 100);
+  const tooltip = passed
+    ? `Answer cross-checked against retrieved sources — ${pct}% confidence that the response is supported by the documents.`
+    : `Could not fully verify the answer against retrieved sources — only ${pct}% confidence. Treat with caution.`;
 
   return (
     <motion.span
       initial={{ scale: 0, opacity: 0 }}
       animate={{ scale: 1, opacity: 1 }}
       transition={{ type: "spring", stiffness: 500, damping: 15 }}
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset ${
+      title={tooltip}
+      className={`inline-flex cursor-help items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset ${
         passed
           ? "verified-shimmer bg-emerald-50 text-emerald-700 ring-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20"
           : "bg-amber-50 text-amber-700 ring-amber-500/20 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/20"

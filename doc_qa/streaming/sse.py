@@ -24,7 +24,7 @@ async def _persist_exchange(
 ) -> None:
     """Fire-and-forget: persist Q&A exchange to the database."""
     try:
-        from doc_qa.db.repository import (
+        from doc_qa.conversations.store import (
             add_message,
             get_conversation_with_messages,
             update_conversation_title,
@@ -52,6 +52,7 @@ async def streaming_query(
     config,
     session_id: str = "",
     conversation_id: str | None = None,
+    query_cache=None,
 ) -> AsyncGenerator[ServerSentEvent, None]:
     """Phased SSE stream that emits events as each query stage completes.
 
@@ -104,6 +105,27 @@ async def streaming_query(
                 logger.warning("Intent classification failed: %s", exc)
 
         # ------------------------------------------------------------------
+        # Phase 1b: Query rewriting for multi-turn (optional)
+        # ------------------------------------------------------------------
+        effective_question = question  # retrieval uses rewritten; display/LLM uses original
+        if session_history and getattr(config, "retrieval", None) and getattr(config.retrieval, "enable_query_rewriting", True):
+            try:
+                from doc_qa.retrieval.query_rewriter import needs_rewrite, rewrite_query
+
+                if needs_rewrite(question, session_history):
+                    max_turns = getattr(config.retrieval, "max_rewrite_history_turns", 4)
+                    effective_question = await rewrite_query(
+                        question, session_history, pipeline._llm, max_history_turns=max_turns,
+                    )
+                    if effective_question != question:
+                        yield ServerSentEvent(
+                            data=json.dumps({"original": question, "rewritten": effective_question}),
+                            event="rewrite",
+                        )
+            except Exception as exc:
+                logger.warning("Query rewrite failed: %s", exc)
+
+        # ------------------------------------------------------------------
         # Phase 2: Retrieval
         # ------------------------------------------------------------------
         if await request.is_disconnected():
@@ -115,7 +137,7 @@ async def streaming_query(
         )
 
         candidates = pipeline._retriever.search(
-            query=question,
+            query=effective_question,
             top_k=pipeline._candidate_pool,
             min_score=pipeline._min_score,
         )
@@ -144,7 +166,7 @@ async def streaming_query(
         if pipeline._rerank and len(candidates) > 1:
             from doc_qa.retrieval.reranker import rerank
 
-            reranked = rerank(query=question, chunks=candidates, top_k=None)
+            reranked = rerank(query=effective_question, chunks=candidates, top_k=None)
 
         diverse = pipeline._apply_file_diversity(reranked)
         top_chunks = diverse[: pipeline._top_k]
@@ -376,6 +398,57 @@ async def streaming_query(
                 gen_result_text = answer.text
                 gen_model = answer.model
 
+        # ------------------------------------------------------------------
+        # Phase 4a: Multi-hop reasoning (optional)
+        # ------------------------------------------------------------------
+        if (
+            gen_result_text
+            and getattr(config, "multi_hop", None)
+            and config.multi_hop.enable_multi_hop
+        ):
+            try:
+                from doc_qa.retrieval.multi_hop import multi_hop_retrieve
+
+                yield ServerSentEvent(
+                    data=json.dumps({"status": "reasoning"}),
+                    event="status",
+                )
+
+                expanded_chunks, had_new = await multi_hop_retrieve(
+                    question=question,
+                    initial_chunks=top_chunks,
+                    initial_answer=gen_result_text,
+                    context_preview=context[:1500],
+                    retriever=pipeline._retriever,
+                    llm_backend=pipeline._llm,
+                    max_hops=config.multi_hop.max_hops,
+                    candidate_pool=pipeline._candidate_pool,
+                    min_score=pipeline._min_score,
+                )
+
+                if had_new:
+                    top_chunks = expanded_chunks
+                    context = pipeline._build_context(top_chunks)
+                    # Re-generate with expanded context
+                    re_answer = await pipeline._llm.ask(
+                        question=question,
+                        context=context,
+                        history=session_history or None,
+                    )
+                    gen_result_text = re_answer.text
+                    gen_model = re_answer.model
+                    # Update sources payload
+                    sources_payload = [
+                        {
+                            "file_path": c.file_path,
+                            "section_title": c.section_title,
+                            "score": round(c.score, 4),
+                        }
+                        for c in top_chunks
+                    ]
+            except Exception as exc:
+                logger.warning("Multi-hop reasoning failed: %s", exc)
+
         # Emit answer
         answer_payload: dict = {
             "answer": gen_result_text,
@@ -387,7 +460,32 @@ async def streaming_query(
         yield ServerSentEvent(data=json.dumps(answer_payload), event="answer")
 
         # ------------------------------------------------------------------
-        # Phase 4b: Source attribution (optional)
+        # Phase 4b: Citation extraction
+        # ------------------------------------------------------------------
+        if gen_result_text and top_chunks:
+            try:
+                from doc_qa.verification.citation_extractor import extract_citations
+
+                citations = extract_citations(gen_result_text, top_chunks)
+                if citations:
+                    yield ServerSentEvent(
+                        data=json.dumps({"citations": [
+                            {
+                                "number": c.number,
+                                "chunk_id": c.chunk_id,
+                                "file_path": c.file_path,
+                                "section_title": c.section_title,
+                                "score": c.score,
+                            }
+                            for c in citations
+                        ]}),
+                        event="citations",
+                    )
+            except Exception as exc:
+                logger.debug("Citation extraction failed: %s", exc)
+
+        # ------------------------------------------------------------------
+        # Phase 4c: Source attribution (optional)
         # ------------------------------------------------------------------
         if gen_result_text and top_chunks:
             try:
@@ -466,6 +564,28 @@ async def streaming_query(
                         metadata=persist_meta or None,
                     )
                 )
+
+        # Cache query result for feedback data capture
+        if query_cache is not None:
+            try:
+                query_cache.put(query_id, {
+                    "question": question,
+                    "answer": gen_result_text or "",
+                    "chunks_used": [c.chunk_id for c in top_chunks] if top_chunks else [],
+                    "scores": [round(c.score, 4) for c in top_chunks] if top_chunks else [],
+                    "confidence": (
+                        verification_result.confidence
+                        if verification_result is not None
+                        else 0.0
+                    ),
+                    "verification_passed": (
+                        verification_result.passed
+                        if verification_result is not None
+                        else None
+                    ),
+                })
+            except Exception as exc:
+                logger.debug("Failed to cache query result: %s", exc)
 
         elapsed = round(time.monotonic() - t_start, 2)
         yield ServerSentEvent(

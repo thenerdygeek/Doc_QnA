@@ -79,6 +79,11 @@ class DocIndex:
                 # Migration may have replaced the table reference
                 if hasattr(self, "_table") and self._table is not None:
                     table = self._table
+            # Migrate: add parent_chunk_id + parent_text if missing (pre-v4 indexes)
+            if "parent_chunk_id" not in table.schema.names:
+                self._migrate_add_parent_columns(table)
+                if hasattr(self, "_table") and self._table is not None:
+                    table = self._table
             return table
 
         # Create with explicit schema
@@ -94,6 +99,8 @@ class DocIndex:
             pa.field("file_hash", pa.utf8()),
             pa.field("doc_date", pa.float64()),
             pa.field("content_type", pa.utf8()),
+            pa.field("parent_chunk_id", pa.utf8()),
+            pa.field("parent_text", pa.utf8()),
         ])
 
         table = self._db.create_table(self.TABLE_NAME, schema=schema)
@@ -145,6 +152,34 @@ class DocIndex:
         except Exception:
             logger.warning(
                 "Failed to migrate content_type column — types will be unavailable until re-index.",
+                exc_info=True,
+            )
+
+    def _migrate_add_parent_columns(self, table: Any) -> None:
+        """Add parent_chunk_id and parent_text columns (migration for pre-v4 indexes).
+
+        Existing chunks become self-parenting: parent_chunk_id="" and
+        parent_text=chunk.text (backward compatible — retrievers can check
+        for non-empty parent_text to use parent context).
+        """
+        try:
+            arrow_table = table.to_arrow()
+            n = arrow_table.num_rows
+            # Self-parenting: empty parent_chunk_id, parent_text = own text
+            parent_id_col = pa.array([""] * n, type=pa.utf8())
+            parent_text_col = arrow_table.column("text")
+            new_table = arrow_table.append_column("parent_chunk_id", parent_id_col)
+            new_table = new_table.append_column("parent_text", parent_text_col)
+            self._db.drop_table(self.TABLE_NAME)
+            new_lance_table = self._db.create_table(self.TABLE_NAME, new_table)
+            logger.info(
+                "Migrated table '%s': added parent columns (%d rows).",
+                self.TABLE_NAME, n,
+            )
+            self._table = new_lance_table
+        except Exception:
+            logger.warning(
+                "Failed to migrate parent columns — parent-child retrieval unavailable until re-index.",
                 exc_info=True,
             )
 
@@ -280,6 +315,8 @@ class DocIndex:
                 "file_hash": h,
                 "doc_date": date_lookup.get(chunk.file_path, 0.0),
                 "content_type": chunk.metadata.get("content_type", "prose"),
+                "parent_chunk_id": chunk.parent_chunk_id,
+                "parent_text": chunk.parent_text,
             })
 
         self._table.add(records)

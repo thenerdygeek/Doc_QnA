@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ApiError } from "@/api/client";
+import { api } from "@/api/client";
 import type { ConversationSummary } from "@/types/api";
 
 export function useConversations() {
@@ -13,10 +13,9 @@ export function useConversations() {
       const list = await api.conversations.list();
       setConversations(list);
       setDbEnabled(true);
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 501) {
-        setDbEnabled(false);
-      }
+    } catch {
+      // SQLite store is always available; only flag false on unexpected failure
+      setDbEnabled(false);
     } finally {
       setLoading(false);
     }

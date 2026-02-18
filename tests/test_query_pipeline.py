@@ -210,7 +210,9 @@ class TestContextBuilding:
                 chunk_index=0,
             ),
         ]
-        context = QueryPipeline._build_context(chunks)
+        pipeline = QueryPipeline.__new__(QueryPipeline)
+        pipeline._enable_parent_retrieval = False
+        context = pipeline._build_context(chunks)
         assert "[Source 1: auth.md" in context
         assert "Authentication" in context
         assert "0.900" in context
@@ -218,7 +220,9 @@ class TestContextBuilding:
 
     def test_build_context_empty(self) -> None:
         """Empty chunk list should produce empty context."""
-        assert QueryPipeline._build_context([]) == ""
+        pipeline = QueryPipeline.__new__(QueryPipeline)
+        pipeline._enable_parent_retrieval = False
+        assert pipeline._build_context([]) == ""
 
 
 class TestContextReordering:

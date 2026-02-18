@@ -21,6 +21,12 @@ export function RetrievalTab({ settings }: { settings: UseSettingsReturn }) {
         min_score: 0.3,
         max_chunks_per_file: 2,
         rerank: true,
+        enable_query_expansion: false,
+        max_expansion_queries: 3,
+        enable_hyde: false,
+        enable_query_rewriting: true,
+        enable_multi_hop: false,
+        max_hops: 2,
     });
     const [saved, setSaved] = useState(false);
 
@@ -33,11 +39,20 @@ export function RetrievalTab({ settings }: { settings: UseSettingsReturn }) {
             min_score: field(config, "retrieval", "min_score", 0.3),
             max_chunks_per_file: field(config, "retrieval", "max_chunks_per_file", 2),
             rerank: field(config, "retrieval", "rerank", true),
+            enable_query_expansion: field(config, "retrieval", "enable_query_expansion", false),
+            max_expansion_queries: field(config, "retrieval", "max_expansion_queries", 3),
+            enable_hyde: field(config, "retrieval", "enable_hyde", false),
+            enable_query_rewriting: field(config, "retrieval", "enable_query_rewriting", true),
+            enable_multi_hop: field(config, "multi_hop", "enable_multi_hop", false),
+            max_hops: field(config, "multi_hop", "max_hops", 2),
         });
     }, [config]);
 
     const handleSave = useCallback(async () => {
-        await updateSection("retrieval", form);
+        // Split retrieval vs multi_hop fields
+        const { enable_multi_hop, max_hops, ...retrievalFields } = form;
+        await updateSection("retrieval", retrievalFields);
+        await updateSection("multi_hop", { enable_multi_hop, max_hops });
         setSaved(true);
         setTimeout(() => setSaved(false), 2000);
     }, [form, updateSection]);
@@ -77,6 +92,60 @@ export function RetrievalTab({ settings }: { settings: UseSettingsReturn }) {
                 <Switch checked={form.rerank} onCheckedChange={(v) => setForm((f) => ({ ...f, rerank: v }))} id="rerank" />
                 <Label htmlFor="rerank">Enable Reranking</Label>
             </div>
+
+            {/* ── Advanced retrieval ──────────────────────────── */}
+            <div className="border-t border-border/40 pt-4">
+                <h4 className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Advanced Retrieval
+                </h4>
+                <div className="space-y-4">
+                    <div className="space-y-3">
+                        <div className="flex items-center gap-3">
+                            <Switch checked={form.enable_query_expansion} onCheckedChange={(v) => setForm((f) => ({ ...f, enable_query_expansion: v }))} id="query-expansion" />
+                            <div>
+                                <Label htmlFor="query-expansion">Query Expansion</Label>
+                                <p className="text-[11px] text-muted-foreground">Generate alternative phrasings to improve recall</p>
+                            </div>
+                        </div>
+                        {form.enable_query_expansion && (
+                            <div className="ml-10 space-y-2">
+                                <Label htmlFor="max-queries">Max Expansion Queries</Label>
+                                <Input id="max-queries" type="number" min={1} max={10} value={form.max_expansion_queries} onChange={(e) => setForm((f) => ({ ...f, max_expansion_queries: +e.target.value }))} className="w-24" />
+                            </div>
+                        )}
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <Switch checked={form.enable_hyde} onCheckedChange={(v) => setForm((f) => ({ ...f, enable_hyde: v }))} id="hyde" />
+                        <div>
+                            <Label htmlFor="hyde">HyDE</Label>
+                            <p className="text-[11px] text-muted-foreground">Generate a hypothetical answer to improve embedding search</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <Switch checked={form.enable_query_rewriting} onCheckedChange={(v) => setForm((f) => ({ ...f, enable_query_rewriting: v }))} id="query-rewriting" />
+                        <div>
+                            <Label htmlFor="query-rewriting">Query Rewriting</Label>
+                            <p className="text-[11px] text-muted-foreground">Rewrite follow-up questions into standalone queries for better retrieval</p>
+                        </div>
+                    </div>
+                    <div className="space-y-3">
+                        <div className="flex items-center gap-3">
+                            <Switch checked={form.enable_multi_hop} onCheckedChange={(v) => setForm((f) => ({ ...f, enable_multi_hop: v }))} id="multi-hop" />
+                            <div>
+                                <Label htmlFor="multi-hop">Multi-hop Reasoning</Label>
+                                <p className="text-[11px] text-muted-foreground">Detect knowledge gaps and retrieve additional context iteratively</p>
+                            </div>
+                        </div>
+                        {form.enable_multi_hop && (
+                            <div className="ml-10 space-y-2">
+                                <Label htmlFor="max-hops">Max Hops</Label>
+                                <Input id="max-hops" type="number" min={1} max={5} value={form.max_hops} onChange={(e) => setForm((f) => ({ ...f, max_hops: +e.target.value }))} className="w-24" />
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+
             <SaveButton onClick={handleSave} saving={saving} saved={saved} />
         </div>
     );

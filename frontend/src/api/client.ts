@@ -9,10 +9,9 @@ import type {
   ConversationDetail,
   ConfigData,
   ConfigUpdateResponse,
-  DbTestResponse,
-  DbMigrateResponse,
   CodyTestResponse,
   OllamaTestResponse,
+  FeedbackRequest,
 } from "@/types/api";
 import type { IndexingStatusResponse } from "@/types/indexing";
 
@@ -105,17 +104,6 @@ export const api = {
         method: "PATCH",
         body: JSON.stringify(body),
       }),
-
-    dbTest: (url: string) =>
-      request<DbTestResponse>("/api/config/db/test", {
-        method: "POST",
-        body: JSON.stringify({ url }),
-      }),
-
-    dbMigrate: () =>
-      request<DbMigrateResponse>("/api/config/db/migrate", {
-        method: "POST",
-      }),
   },
 
   indexing: {
@@ -139,6 +127,15 @@ export const api = {
       `/api/browse?path=${encodeURIComponent(path)}`,
       { timeoutMs: 5_000 },
     ),
+
+  feedback: {
+    submit: (body: FeedbackRequest) =>
+      request<{ ok: boolean }>("/api/feedback", {
+        method: "POST",
+        body: JSON.stringify(body),
+        timeoutMs: 5_000,
+      }),
+  },
 
   llm: {
     testCody: (body: { endpoint: string; access_token_env: string }) =>

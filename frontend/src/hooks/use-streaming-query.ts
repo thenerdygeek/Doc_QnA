@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { streamQuery } from "@/api/sse-client";
-import type { SSEEvent, PipelineStatus } from "@/types/sse";
+import type { SSEEvent, PipelineStatus, CitationInfo } from "@/types/sse";
 import type { SourceInfo, AttributionInfo } from "@/types/api";
 
 export type StreamPhase = "idle" | "streaming" | "complete" | "error";
@@ -19,8 +19,11 @@ export interface StreamingQueryState {
   verification: { passed: boolean; confidence: number } | null;
   model: string | null;
   sessionId: string | null;
+  rewrittenQuery: string | null;
+  citations: CitationInfo[];
   diagrams: string[];
   elapsed: number | null;
+  queryId: string | null;
   error: string | null;
 }
 
@@ -38,8 +41,11 @@ const INITIAL_STATE: StreamingQueryState = {
   verification: null,
   model: null,
   sessionId: null,
+  rewrittenQuery: null,
+  citations: [],
   diagrams: [],
   elapsed: null,
+  queryId: null,
   error: null,
 };
 
@@ -58,6 +64,14 @@ export function useStreamingQuery() {
             intent: event.data.intent,
             intentConfidence: event.data.confidence,
           };
+        case "rewrite":
+          return {
+            ...prev,
+            pipelineStatus: "reformulating",
+            rewrittenQuery: event.data.rewritten,
+          };
+        case "citations":
+          return { ...prev, citations: event.data.citations };
         case "sources":
           return {
             ...prev,
@@ -92,6 +106,7 @@ export function useStreamingQuery() {
             phase: "complete",
             pipelineStatus: "complete",
             elapsed: event.data.elapsed,
+            queryId: event.data.query_id ?? null,
           };
         case "error":
           return { ...prev, phase: "error", error: event.data.error };

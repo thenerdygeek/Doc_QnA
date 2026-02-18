@@ -40,6 +40,8 @@ class Chunk:
     section_level: int
     chunk_index: int
     metadata: dict[str, str] = field(default_factory=dict)
+    parent_chunk_id: str = ""
+    parent_text: str = ""
 
     def estimate_tokens(self) -> int:
         """Approximate token count (~4 chars per token)."""
@@ -125,6 +127,20 @@ def _extract_atomic_blocks(text: str) -> list[tuple[str, str]]:
     _flush_prose()
 
     return blocks
+
+
+def _apply_table_prefix(text: str, meta: dict[str, str]) -> str:
+    """Prepend a table-header prefix for better embedding quality.
+
+    When the chunk is detected as table content and has ``table_headers``
+    metadata (set by the PDF parser), prepends a short description so the
+    embedding model captures column semantics.
+    """
+    ct = meta.get("content_type", "")
+    headers = meta.get("table_headers", "")
+    if ct in ("table", "mixed") and headers:
+        return f"Table with columns: {headers}.\n\n{text}"
+    return text
 
 
 def _detect_content_type(text: str) -> dict[str, str]:
@@ -434,7 +450,7 @@ def chunk_sections(
             chunks.append(
                 Chunk(
                     chunk_id=f"{file_path}#{chunk_index}",
-                    text=full_text,
+                    text=_apply_table_prefix(full_text, meta),
                     file_path=file_path,
                     file_type=file_type,
                     section_title=section.title,
@@ -459,7 +475,7 @@ def chunk_sections(
                     chunks.append(
                         Chunk(
                             chunk_id=f"{file_path}#{chunk_index}",
-                            text=block_text_stripped,
+                            text=_apply_table_prefix(block_text_stripped, meta),
                             file_path=file_path,
                             file_type=file_type,
                             section_title=section.title,
@@ -491,7 +507,7 @@ def chunk_sections(
                         chunks.append(
                             Chunk(
                                 chunk_id=f"{file_path}#{chunk_index}",
-                                text=part_stripped,
+                                text=_apply_table_prefix(part_stripped, meta),
                                 file_path=file_path,
                                 file_type=file_type,
                                 section_title=section.title,
@@ -509,3 +525,114 @@ def chunk_sections(
         len(chunks),
     )
     return chunks
+
+
+def chunk_sections_parent_child(
+    sections: list[ParsedSection],
+    file_path: str,
+    parent_max_tokens: int = 1024,
+    child_max_tokens: int = 256,
+    overlap_tokens: int = 50,
+    min_tokens: int = 100,
+    chunking_strategy: str = "paragraph",
+    embedding_model: str = "nomic-ai/nomic-embed-text-v1.5",
+) -> list[Chunk]:
+    """Two-tier parent-child chunking for precision retrieval + full-context LLM.
+
+    Phase 1: Create parent-sized chunks using standard ``chunk_sections``.
+    Phase 2: Split each parent into child-sized pieces.
+    Each child stores its parent's ID and full text for context expansion.
+
+    If a parent is already small enough (≤ child_max_tokens), it becomes
+    its own child (self-parenting).
+
+    Args:
+        sections: Parsed sections from a document parser.
+        file_path: Source file path.
+        parent_max_tokens: Maximum tokens for parent chunks.
+        child_max_tokens: Maximum tokens for child chunks.
+        overlap_tokens: Token overlap for splitting.
+        min_tokens: Minimum tokens before merging.
+        chunking_strategy: Splitting strategy for prose blocks.
+        embedding_model: Model name for semantic chunking.
+
+    Returns:
+        List of child Chunks, each with parent_chunk_id and parent_text set.
+    """
+    if not sections:
+        return []
+
+    # Phase 1: Create parent-sized chunks
+    parents = chunk_sections(
+        sections,
+        file_path=file_path,
+        max_tokens=parent_max_tokens,
+        overlap_tokens=overlap_tokens,
+        min_tokens=min_tokens,
+        chunking_strategy=chunking_strategy,
+        embedding_model=embedding_model,
+    )
+
+    if not parents:
+        return []
+
+    # Phase 2: Split each parent into child-sized pieces
+    children: list[Chunk] = []
+    child_index = 0
+
+    for parent in parents:
+        parent_id = f"{file_path}#parent_{parent.chunk_index}"
+        parent_text = parent.text
+        parent_tokens = _estimate_tokens(parent_text)
+
+        if parent_tokens <= child_max_tokens:
+            # Self-parenting: parent is small enough to be its own child
+            children.append(
+                Chunk(
+                    chunk_id=f"{file_path}#{child_index}",
+                    text=parent_text,
+                    file_path=parent.file_path,
+                    file_type=parent.file_type,
+                    section_title=parent.section_title,
+                    section_level=parent.section_level,
+                    chunk_index=child_index,
+                    metadata=parent.metadata.copy(),
+                    parent_chunk_id=parent_id,
+                    parent_text=parent_text,
+                )
+            )
+            child_index += 1
+        else:
+            # Split parent into child-sized pieces
+            child_texts = _split_at_paragraphs(
+                parent_text, child_max_tokens, overlap_tokens,
+            )
+            for child_text in child_texts:
+                child_text_stripped = child_text.strip()
+                if not child_text_stripped:
+                    continue
+                meta = _detect_content_type(child_text_stripped)
+                meta.update(parent.metadata)
+                children.append(
+                    Chunk(
+                        chunk_id=f"{file_path}#{child_index}",
+                        text=child_text_stripped,
+                        file_path=parent.file_path,
+                        file_type=parent.file_type,
+                        section_title=parent.section_title,
+                        section_level=parent.section_level,
+                        chunk_index=child_index,
+                        metadata=meta,
+                        parent_chunk_id=parent_id,
+                        parent_text=parent_text,
+                    )
+                )
+                child_index += 1
+
+    logger.info(
+        "Parent-child chunked %s: %d parents → %d children",
+        file_path,
+        len(parents),
+        len(children),
+    )
+    return children

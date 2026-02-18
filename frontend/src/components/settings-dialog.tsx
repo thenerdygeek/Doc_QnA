@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Loader2,
-  Database,
   Search,
   Brain,
   Sparkles,
@@ -22,7 +21,6 @@ import type { UseSettingsReturn } from "@/hooks/use-settings";
 import type { UseTourReturn } from "@/hooks/use-tour";
 import type { UseIndexingReturn } from "@/hooks/use-indexing";
 import { TourOverlay } from "@/components/settings/tour-overlay";
-import { DatabaseTab } from "@/components/settings/database-tab";
 import { RetrievalTab } from "@/components/settings/retrieval-tab";
 import { LLMTab } from "@/components/settings/llm-tab";
 import { IntelligenceTab } from "@/components/settings/intelligence-tab";
@@ -37,13 +35,12 @@ interface SettingsDialogProps {
   onOpenChange: (open: boolean) => void;
   settings: UseSettingsReturn;
   tour: UseTourReturn;
-  onDbSaved?: () => void;
   indexing: UseIndexingReturn;
 }
 
-export function SettingsDialog({ open, onOpenChange, settings, tour, onDbSaved, indexing }: SettingsDialogProps) {
+export function SettingsDialog({ open, onOpenChange, settings, tour, indexing }: SettingsDialogProps) {
   const { loading, restartRequired } = settings;
-  const [activeTab, setActiveTab] = useState("database");
+  const [activeTab, setActiveTab] = useState("retrieval");
 
   // When tour is active and step has a tab, switch to it
   useEffect(() => {
@@ -51,19 +48,6 @@ export function SettingsDialog({ open, onOpenChange, settings, tour, onDbSaved, 
       setActiveTab(tour.step.tab);
     }
   }, [tour.active, tour.step]);
-
-  // After DB save + migrate, notify parent so it can refresh conversations
-  const originalUpdateSection = settings.updateSection;
-  const wrappedSettings: UseSettingsReturn = {
-    ...settings,
-    updateSection: async (section, data) => {
-      const result = await originalUpdateSection(section, data);
-      if (section === "database" && onDbSaved) {
-        onDbSaved();
-      }
-      return result;
-    },
-  };
 
   function tabBadge(sections: string[]) {
     return sections.some((s) => restartRequired.includes(s)) ? (
@@ -83,7 +67,6 @@ export function SettingsDialog({ open, onOpenChange, settings, tour, onDbSaved, 
   };
 
   const TABS = [
-    { value: "database", icon: Database, label: "Database", badge: undefined },
     { value: "retrieval", icon: Search, label: "Retrieval", badge: undefined },
     { value: "llm", icon: Brain, label: "LLM", badge: tabBadge(["llm", "cody", "ollama"]) },
     { value: "intelligence", icon: Sparkles, label: "Intel", badge: undefined },
@@ -155,26 +138,23 @@ export function SettingsDialog({ open, onOpenChange, settings, tour, onDbSaved, 
                   </div>
                 )}
 
-                <TabsContent value="database" className="mt-4">
-                  <DatabaseTab settings={wrappedSettings} />
-                </TabsContent>
                 <TabsContent value="retrieval" className="mt-4">
-                  <RetrievalTab settings={wrappedSettings} />
+                  <RetrievalTab settings={settings} />
                 </TabsContent>
                 <TabsContent value="llm" className="mt-4">
-                  <LLMTab settings={wrappedSettings} />
+                  <LLMTab settings={settings} />
                 </TabsContent>
                 <TabsContent value="intelligence" className="mt-4">
-                  <IntelligenceTab settings={wrappedSettings} />
+                  <IntelligenceTab settings={settings} />
                 </TabsContent>
                 <TabsContent value="generation" className="mt-4">
-                  <GenerationTab settings={wrappedSettings} />
+                  <GenerationTab settings={settings} />
                 </TabsContent>
                 <TabsContent value="verification" className="mt-4">
-                  <VerificationTab settings={wrappedSettings} />
+                  <VerificationTab settings={settings} />
                 </TabsContent>
                 <TabsContent value="indexing" className="mt-4">
-                  <IndexingTab settings={wrappedSettings} indexing={indexing} />
+                  <IndexingTab settings={settings} indexing={indexing} />
                 </TabsContent>
               </Tabs>
             )}

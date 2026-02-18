@@ -172,13 +172,13 @@ vi.mock("lucide-react", () => {
     XCircle: icon("XCircle"),
     Loader2: icon("Loader2"),
     AlertTriangle: icon("AlertTriangle"),
-    Database: icon("Database"),
     Search: icon("Search"),
     Brain: icon("Brain"),
     Sparkles: icon("Sparkles"),
     ShieldCheck: icon("ShieldCheck"),
     Radio: icon("Radio"),
     HardDrive: icon("HardDrive"),
+    RefreshCw: icon("RefreshCw"),
     ChevronRight: icon("ChevronRight"),
     ChevronLeft: icon("ChevronLeft"),
     SkipForward: icon("SkipForward"),
@@ -239,7 +239,6 @@ vi.mock("@/api/client", () => ({
 // ── Helpers ────────────────────────────────────────────────────────
 
 const DEFAULT_CONFIG: ConfigData = {
-  database: { url: "postgresql://localhost:5432/doc_qa" },
   retrieval: {
     search_mode: "hybrid",
     top_k: 5,
@@ -274,7 +273,7 @@ const DEFAULT_CONFIG: ConfigData = {
     chunk_size: 512,
     chunk_overlap: 50,
     min_chunk_size: 100,
-    embedding_model: "sentence-transformers/all-MiniLM-L6-v2",
+    embedding_model: "auto",
   },
 };
 
@@ -297,10 +296,6 @@ function makeSettings(overrides: Partial<UseSettingsReturn> = {}): UseSettingsRe
     setOpen: vi.fn(),
     updateSection: vi.fn().mockResolvedValue([]),
     saving: false,
-    testDbConnection: vi.fn().mockResolvedValue({ ok: true }),
-    dbTestResult: null,
-    runMigrations: vi.fn().mockResolvedValue({ ok: true }),
-    migrateResult: null,
     restartRequired: [],
     ...overrides,
   };
@@ -348,7 +343,6 @@ interface RenderOpts {
   tour?: Partial<UseTourReturn>;
   indexing?: Partial<UseIndexingReturn>;
   onOpenChange?: ReturnType<typeof vi.fn>;
-  onDbSaved?: ReturnType<typeof vi.fn>;
 }
 
 function renderDialog(opts: RenderOpts = {}) {
@@ -358,7 +352,6 @@ function renderDialog(opts: RenderOpts = {}) {
     tour: tourOverrides = {},
     indexing: indexingOverrides = {},
     onOpenChange = vi.fn(),
-    onDbSaved = vi.fn(),
   } = opts;
 
   const settings = makeSettings(settingsOverrides);
@@ -371,48 +364,28 @@ function renderDialog(opts: RenderOpts = {}) {
       onOpenChange={onOpenChange}
       settings={settings}
       tour={tour}
-      onDbSaved={onDbSaved}
       indexing={indexing}
     />,
   );
 
-  return { ...result, settings, tour, indexing, onOpenChange, onDbSaved };
+  return { ...result, settings, tour, indexing, onOpenChange };
 }
 
 // ── Group 1: field() helper ────────────────────────────────────────
-// We test field() indirectly: when config has data the UI shows it;
-// when config is null or sections are missing, fallbacks appear.
+// We test field() indirectly via the retrieval tab (always present).
 
 describe("field() helper (via rendered output)", () => {
   it("populates inputs from config values", () => {
     renderDialog();
-    // Database tab is active by default; the URL input should have config value
-    const input = screen.getByPlaceholderText("postgresql://user:pass@localhost:5432/doc_qa");
-    expect(input).toHaveValue("postgresql://localhost:5432/doc_qa");
+    const input = screen.getByLabelText("Top K") as HTMLInputElement;
+    expect(input.value).toBe("5");
   });
 
   it("uses fallback when config is null", () => {
     renderDialog({ settings: { config: null } });
-    const input = screen.getByPlaceholderText("postgresql://user:pass@localhost:5432/doc_qa");
-    expect(input).toHaveValue("");
-  });
-
-  it("uses fallback when section is missing from config", () => {
-    const config: ConfigData = { ...DEFAULT_CONFIG };
-    delete config.database;
-    renderDialog({ settings: { config } });
-    const input = screen.getByPlaceholderText("postgresql://user:pass@localhost:5432/doc_qa");
-    expect(input).toHaveValue("");
-  });
-
-  it("uses fallback when key is missing from section", () => {
-    const config: ConfigData = {
-      ...DEFAULT_CONFIG,
-      database: {},
-    };
-    renderDialog({ settings: { config } });
-    const input = screen.getByPlaceholderText("postgresql://user:pass@localhost:5432/doc_qa");
-    expect(input).toHaveValue("");
+    // Retrieval tab's Top K should show default
+    const input = screen.getByLabelText("Top K") as HTMLInputElement;
+    expect(input.value).toBe("5");
   });
 });
 
@@ -448,10 +421,9 @@ describe("RestartBadge (via LLM tab)", () => {
 
 // ── Group 3: SaveButton ────────────────────────────────────────────
 
-describe("SaveButton (via DatabaseTab)", () => {
+describe("SaveButton (via RetrievalTab)", () => {
   it('shows "Save" by default', () => {
     renderDialog();
-    // Database tab has a save button
     const saveButtons = screen.getAllByRole("button").filter((b) => b.textContent?.includes("Save"));
     expect(saveButtons.length).toBeGreaterThan(0);
     expect(saveButtons[0]).toHaveTextContent("Save");
@@ -461,9 +433,7 @@ describe("SaveButton (via DatabaseTab)", () => {
     const user = userEvent.setup();
     renderDialog();
     const saveButtons = screen.getAllByRole("button").filter((b) => b.textContent === "Save");
-    // Click the first save button (DatabaseTab)
     await user.click(saveButtons[0]);
-    // After save, text changes to "Saved"
     expect(screen.getAllByRole("button").some((b) => b.textContent === "Saved")).toBe(true);
   });
 
@@ -472,7 +442,6 @@ describe("SaveButton (via DatabaseTab)", () => {
     const saveButtons = screen.getAllByRole("button").filter(
       (b) => b.textContent?.includes("Save") || b.textContent?.includes("Saved"),
     );
-    // All save buttons should be disabled
     saveButtons.forEach((btn) => {
       expect(btn).toBeDisabled();
     });
@@ -480,7 +449,6 @@ describe("SaveButton (via DatabaseTab)", () => {
 
   it("shows Loader2 spinner while saving", () => {
     renderDialog({ settings: { saving: true } });
-    // Loader2 icons should be present for each saving tab
     expect(screen.getAllByTestId("icon-Loader2").length).toBeGreaterThan(0);
   });
 
@@ -669,22 +637,20 @@ describe("SettingsDialog main", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders all 7 tab triggers", () => {
+  it("renders all 6 tab triggers", () => {
     renderDialog();
     const tablist = screen.getByRole("tablist");
     const tabs = within(tablist).getAllByRole("tab");
-    expect(tabs).toHaveLength(7);
+    expect(tabs).toHaveLength(6);
   });
 
   it("tab triggers have expected labels", () => {
     renderDialog();
-    expect(screen.getByText("Database")).toBeInTheDocument();
     expect(screen.getByText("Retrieval")).toBeInTheDocument();
     expect(screen.getByText("Intel")).toBeInTheDocument();
     expect(screen.getByText("Gen")).toBeInTheDocument();
     expect(screen.getByText("Verify")).toBeInTheDocument();
     expect(screen.getByText("Index")).toBeInTheDocument();
-    // LLM tab trigger text
     expect(screen.getByRole("tab", { name: /LLM/ })).toBeInTheDocument();
   });
 
@@ -771,7 +737,6 @@ describe("SettingsDialog main", () => {
         onOpenChange={onOpenChange}
         settings={makeSettings()}
         tour={makeTour({ active: true, step: makeTourStep({ tab: "llm" }), finish })}
-        onDbSaved={vi.fn()}
         indexing={makeIndexing()}
       />,
     );
@@ -783,132 +748,9 @@ describe("SettingsDialog main", () => {
     unmount();
   });
 
-  it("calls onDbSaved when database section is saved", async () => {
-    const user = userEvent.setup();
-    const onDbSaved = vi.fn();
-    const updateSection = vi.fn().mockResolvedValue([]);
-    renderDialog({
-      settings: { updateSection },
-      onDbSaved,
-    });
-
-    // The database tab is default active. Find the save button in the database tab
-    const saveButtons = screen.getAllByRole("button").filter((b) => b.textContent === "Save");
-    await user.click(saveButtons[0]);
-
-    // updateSection should have been called with "database"
-    expect(updateSection).toHaveBeenCalledWith("database", expect.objectContaining({ url: expect.any(String) }));
-    // onDbSaved should have been called by the wrappedSettings
-    expect(onDbSaved).toHaveBeenCalledOnce();
-  });
 });
 
 // ── Group 6: Tab sub-components ────────────────────────────────────
-
-describe("DatabaseTab", () => {
-  it("renders URL input with value from config", () => {
-    renderDialog();
-    const input = screen.getByPlaceholderText("postgresql://user:pass@localhost:5432/doc_qa");
-    expect(input).toHaveValue("postgresql://localhost:5432/doc_qa");
-  });
-
-  it("renders description text", () => {
-    renderDialog();
-    expect(
-      screen.getByText("PostgreSQL connection string for conversation persistence."),
-    ).toBeInTheDocument();
-  });
-
-  it("renders Test Connection button", () => {
-    renderDialog();
-    // There are 3 Test Connection buttons (DB, Cody, Ollama) since all tabs render
-    const buttons = screen.getAllByText("Test Connection");
-    expect(buttons.length).toBeGreaterThanOrEqual(1);
-  });
-
-  it("Test Connection button is disabled when URL is empty", () => {
-    renderDialog({ settings: { config: { ...DEFAULT_CONFIG, database: { url: "" } } } });
-    // Get the database tab's Test Connection button (first one with Database icon)
-    const panels = screen.getAllByRole("tabpanel");
-    const dbPanel = panels.find((p) => p.dataset.value === "database")!;
-    const testBtn = within(dbPanel).getByText("Test Connection").closest("button")!;
-    expect(testBtn).toBeDisabled();
-  });
-
-  it("calls testDbConnection when Test Connection is clicked", async () => {
-    const user = userEvent.setup();
-    const { settings } = renderDialog();
-    const panels = screen.getAllByRole("tabpanel");
-    const dbPanel = panels.find((p) => p.dataset.value === "database")!;
-    const testBtn = within(dbPanel).getByText("Test Connection").closest("button")!;
-    await user.click(testBtn);
-    expect(settings.testDbConnection).toHaveBeenCalledWith(
-      "postgresql://localhost:5432/doc_qa",
-    );
-  });
-
-  it('shows "Connected" when dbTestResult is ok', () => {
-    renderDialog({ settings: { dbTestResult: { ok: true } } });
-    expect(screen.getByText("Connected")).toBeInTheDocument();
-  });
-
-  it("shows error message when dbTestResult is not ok", () => {
-    renderDialog({
-      settings: { dbTestResult: { ok: false, error: "Connection refused" } },
-    });
-    expect(screen.getByText("Connection refused")).toBeInTheDocument();
-  });
-
-  it("renders Run Migrations button", () => {
-    renderDialog();
-    expect(screen.getByText("Run Migrations")).toBeInTheDocument();
-  });
-
-  it("Run Migrations button is disabled when no successful test", () => {
-    renderDialog({ settings: { dbTestResult: null } });
-    const migrateBtn = screen.getByText("Run Migrations").closest("button")!;
-    expect(migrateBtn).toBeDisabled();
-  });
-
-  it("Run Migrations button is enabled after successful test", () => {
-    renderDialog({ settings: { dbTestResult: { ok: true } } });
-    const migrateBtn = screen.getByText("Run Migrations").closest("button")!;
-    expect(migrateBtn).not.toBeDisabled();
-  });
-
-  it("calls runMigrations when Run Migrations is clicked", async () => {
-    const user = userEvent.setup();
-    const { settings } = renderDialog({
-      settings: { dbTestResult: { ok: true } },
-    });
-    const migrateBtn = screen.getByText("Run Migrations").closest("button")!;
-    await user.click(migrateBtn);
-    expect(settings.runMigrations).toHaveBeenCalledOnce();
-  });
-
-  it("shows migration success with revision", () => {
-    renderDialog({
-      settings: { migrateResult: { ok: true, revision: "abc123" } },
-    });
-    expect(screen.getByText("Migrations applied")).toBeInTheDocument();
-    expect(screen.getByText(/rev abc123/)).toBeInTheDocument();
-  });
-
-  it("shows migration error", () => {
-    renderDialog({
-      settings: { migrateResult: { ok: false, error: "Migration failed" } },
-    });
-    expect(screen.getByText("Migration failed")).toBeInTheDocument();
-  });
-
-  it("typing in URL input updates value", async () => {
-    const user = userEvent.setup();
-    renderDialog({ settings: { config: { ...DEFAULT_CONFIG, database: { url: "" } } } });
-    const input = screen.getByPlaceholderText("postgresql://user:pass@localhost:5432/doc_qa");
-    await user.type(input, "postgres://new-url");
-    expect(input).toHaveValue("postgres://new-url");
-  });
-});
 
 describe("RetrievalTab", () => {
   it("renders Top K input with config value", () => {
@@ -991,8 +833,7 @@ describe("LLMTab", () => {
 
   it("renders Test Connection buttons for both Cody and Ollama", () => {
     renderDialog();
-    // There are 3 Test Connection buttons total (DB, Cody, Ollama)
-    // Check the LLM panel has exactly 2
+    // Check the LLM panel has exactly 2 (Cody, Ollama)
     const panels = screen.getAllByRole("tabpanel");
     const llmPanel = panels.find((p) => p.dataset.value === "llm")!;
     const testButtons = within(llmPanel).getAllByText("Test Connection");
@@ -1125,8 +966,12 @@ describe("VerificationTab", () => {
     const { settings } = renderDialog();
     const panels = screen.getAllByRole("tabpanel");
     const verifyPanel = panels.find((p) => p.dataset.value === "verification")!;
-    const saveBtn = within(verifyPanel).getByText("Save").closest("button")!;
-    await user.click(saveBtn);
+    // Find the Save button closest to a verification-specific element
+    const cragSwitch = within(verifyPanel).getByLabelText("Enable CRAG");
+    const saveBtn = cragSwitch.closest("[role='tabpanel']")!.querySelector("[data-slot='button']") as HTMLElement;
+    // Use the first Save button directly in the verification panel
+    const allSaveBtns = within(verifyPanel).getAllByText("Save");
+    await user.click(allSaveBtns[0].closest("button")!);
     expect(settings.updateSection).toHaveBeenCalledWith(
       "verification",
       expect.objectContaining({
@@ -1154,9 +999,9 @@ describe("IndexingTab", () => {
     expect(screen.getByLabelText("Min Chunk Size")).toBeInTheDocument();
   });
 
-  it("renders Embedding Model input", () => {
+  it("renders Embedding Model dropdown", () => {
     renderDialog();
-    expect(screen.getByLabelText("Embedding Model")).toBeInTheDocument();
+    expect(screen.getByText("Embedding Model")).toBeInTheDocument();
   });
 
   it("shows RestartBadge when indexing needs restart", () => {
@@ -1170,7 +1015,7 @@ describe("IndexingTab", () => {
     renderDialog();
     expect(
       screen.getByText(
-        "Path to a documentation folder (relative or absolute). A new index will replace the old one.",
+        "Path to a documentation folder (relative or absolute). Only new and changed files will be indexed.",
       ),
     ).toBeInTheDocument();
   });
@@ -1186,7 +1031,7 @@ describe("IndexingTab", () => {
       "indexing",
       expect.objectContaining({
         chunk_size: 512,
-        embedding_model: "sentence-transformers/all-MiniLM-L6-v2",
+        embedding_model: "auto",
       }),
     );
   });

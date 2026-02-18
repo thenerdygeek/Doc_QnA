@@ -9,9 +9,10 @@ from __future__ import annotations
 SYSTEM_PROMPT = (
     "You are a documentation assistant. Answer the user's question "
     "based ONLY on the provided context. If the context does not contain "
-    "enough information, say so clearly. Always cite sources using "
-    "[Source: filename] format. When sources contain conflicting "
-    "information, prefer the most recently dated source."
+    "enough information, say so clearly. Cite sources using numbered "
+    "references like [1], [2], [3] that match the source numbers in the "
+    "provided context (e.g., [Source 1: ...] → cite as [1]). When sources "
+    "contain conflicting information, prefer the most recently dated source."
 )
 
 # ── Intent Classification ────────────────────────────────────────────
@@ -358,3 +359,51 @@ Suggested fix: {suggested_fix}
 
 Rewrite the answer to address these issues. Keep it concise and \
 well-structured. Cite sources using [Source: filename] format."""
+
+# ── Conversational Query Rewriting ────────────────────────────────
+
+CONVERSATIONAL_REWRITE = """\
+Given the conversation history and a follow-up question, rewrite the \
+follow-up question as a standalone question that captures the full \
+context. The rewritten question should be self-contained and \
+understandable without the conversation history.
+
+Conversation history:
+{history}
+
+Follow-up question: "{question}"
+
+Return ONLY the rewritten standalone question, nothing else.
+
+Standalone question:"""
+
+# ── Multi-hop Gap Detection ───────────────────────────────────────
+
+MULTI_HOP_GAP_DETECTION = """\
+You just answered a question using documentation context, but the answer \
+may be incomplete. Review the question, answer, and context to identify \
+any UNANSWERED aspects that could be resolved with additional information.
+
+Question: "{question}"
+
+Answer provided:
+{answer}
+
+Context used (preview):
+{context_preview}
+
+If there are unanswered aspects, list up to 3 follow-up search queries \
+that would help fill the gaps. Each query should be specific and \
+self-contained.
+
+If the answer is complete, respond with ONLY the word: NONE
+
+Follow-up queries (one per line, numbered):"""
+
+# ── Table Context Hint ─────────────────────────────────────────────
+
+TABLE_CONTEXT_HINT = (
+    "Some of the provided sources contain tabular data. When referencing "
+    "table content, preserve the table structure in your response using "
+    "markdown tables. Include relevant column headers and data rows."
+)

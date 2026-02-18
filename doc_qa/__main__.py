@@ -16,12 +16,19 @@ def cmd_index(args: argparse.Namespace) -> None:
     """Index documentation from the given repo path."""
     import time
 
-    from doc_qa.indexing.chunker import chunk_sections
+    from doc_qa.indexing.chunker import chunk_sections, chunk_sections_parent_child
     from doc_qa.indexing.indexer import DocIndex
+    from doc_qa.indexing.model_selector import resolve_model_name
     from doc_qa.indexing.scanner import scan_files
     from doc_qa.parsers.registry import parse_file
 
     config = load_config(Path(args.config) if args.config else None)
+
+    # Resolve "auto" to a concrete model name
+    raw_model = config.indexing.embedding_model
+    config.indexing.embedding_model = resolve_model_name(raw_model)
+    if raw_model == "auto":
+        print(f"  Embedding model: auto-selected → {config.indexing.embedding_model}")
 
     repo_path = Path(args.repo)
     if not repo_path.is_dir():
@@ -81,13 +88,23 @@ def cmd_index(args: argparse.Namespace) -> None:
             print(f"  {file_path.name}: skipped (no parseable content)")
             continue
 
-        chunks = chunk_sections(
-            sections,
-            file_path=fp,
-            max_tokens=config.indexing.chunk_size,
-            overlap_tokens=config.indexing.chunk_overlap,
-            min_tokens=config.indexing.min_chunk_size,
-        )
+        if config.indexing.enable_parent_child:
+            chunks = chunk_sections_parent_child(
+                sections,
+                file_path=fp,
+                parent_max_tokens=config.indexing.parent_chunk_size,
+                child_max_tokens=config.indexing.child_chunk_size,
+                overlap_tokens=config.indexing.chunk_overlap,
+                min_tokens=config.indexing.min_chunk_size,
+            )
+        else:
+            chunks = chunk_sections(
+                sections,
+                file_path=fp,
+                max_tokens=config.indexing.chunk_size,
+                overlap_tokens=config.indexing.chunk_overlap,
+                min_tokens=config.indexing.min_chunk_size,
+            )
 
         if not chunks:
             continue
@@ -113,10 +130,14 @@ def cmd_query(args: argparse.Namespace) -> None:
     import asyncio
 
     from doc_qa.indexing.indexer import DocIndex
+    from doc_qa.indexing.model_selector import resolve_model_name
     from doc_qa.llm.backend import create_backend
     from doc_qa.retrieval.query_pipeline import QueryPipeline
 
     config = load_config(Path(args.config) if args.config else None)
+
+    # Resolve "auto" to a concrete model name
+    config.indexing.embedding_model = resolve_model_name(config.indexing.embedding_model)
 
     repo_path = Path(args.repo)
     if not repo_path.is_dir():
@@ -192,6 +213,12 @@ def cmd_query(args: argparse.Namespace) -> None:
         hyde_weight=config.retrieval.hyde_weight,
         section_level_boost=config.retrieval.section_level_boost,
         recency_boost=config.retrieval.recency_boost,
+        adaptive_min_score=config.retrieval.adaptive_min_score,
+        adaptive_std_factor=config.retrieval.adaptive_std_factor,
+        adaptive_floor=config.retrieval.adaptive_floor,
+        dynamic_top_k=config.retrieval.dynamic_top_k,
+        dynamic_max_k=config.retrieval.dynamic_max_k,
+        dynamic_gap_threshold=config.retrieval.dynamic_gap_threshold,
     )
 
     async def _run_query() -> None:
@@ -290,44 +317,6 @@ def cmd_eval(args: argparse.Namespace) -> None:
     # Exit code based on pass/fail
     if not summary.passed():
         sys.exit(1)
-
-
-def cmd_db(args: argparse.Namespace) -> None:
-    """Run database migrations."""
-    import os
-
-    from doc_qa.db.engine import get_database_url
-
-    config = load_config(Path(args.config) if args.config else None)
-    db_url = get_database_url(config.database.url if config.database else None)
-    if not db_url:
-        print(
-            "Error: No database URL configured.\n"
-            "Set DOC_QA_DATABASE_URL env var or add database.url to config.yaml.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    # Alembic needs the sync URL form for its config, but our env.py resolves it
-    os.environ["DOC_QA_DATABASE_URL"] = db_url
-
-    from alembic import command as alembic_cmd
-    from alembic.config import Config as AlembicConfig
-
-    alembic_ini = Path(__file__).resolve().parent.parent.parent / "alembic.ini"
-    alembic_cfg = AlembicConfig(str(alembic_ini))
-
-    action = args.action
-    if action == "upgrade":
-        revision = args.revision or "head"
-        print(f"Upgrading database to {revision}...")
-        alembic_cmd.upgrade(alembic_cfg, revision)
-        print("Done.")
-    elif action == "downgrade":
-        revision = args.revision or "-1"
-        print(f"Downgrading database by {revision}...")
-        alembic_cmd.downgrade(alembic_cfg, revision)
-        print("Done.")
 
 
 def _ensure_embedding_model(model_name: str) -> None:
@@ -531,16 +520,115 @@ def cmd_install_model(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_feedback_export(args: argparse.Namespace) -> None:
+    """Export positive feedback as evaluation test cases."""
+    import asyncio
+
+    from doc_qa.feedback.converter import export_feedback_test_cases
+    from doc_qa.feedback.store import export_positive_feedback, init_feedback_store
+
+    config = load_config(Path(args.config) if args.config else None)
+
+    # Determine feedback DB path
+    repo_path = config.doc_repo.path or "."
+    db_path = resolve_db_path(config, repo_path)
+    feedback_db = str(Path(db_path).parent / "feedback.db") if db_path else "./data/feedback.db"
+
+    async def _run() -> None:
+        await init_feedback_store(feedback_db)
+        rows = await export_positive_feedback(limit=10000)
+
+        if not rows:
+            print("No positive feedback found in the database.")
+            return
+
+        print(f"Found {len(rows)} positive feedback entries.")
+
+        added = export_feedback_test_cases(
+            output_path=args.output,
+            existing_path=args.merge_with,
+            min_confidence=args.min_confidence,
+            feedback_rows=rows,
+        )
+        print(f"Exported {added} new test cases to {args.output}")
+
+    asyncio.run(_run())
+
+
+def cmd_bundle_models(args: argparse.Namespace) -> None:
+    """Pre-download both embedding models for offline deployment."""
+    from doc_qa.indexing.embedder import _get_model, embed_texts, get_cache_dir
+
+    models = [
+        "sentence-transformers/all-MiniLM-L6-v2",
+        "nomic-ai/nomic-embed-text-v1.5",
+    ]
+
+    cache_dir = get_cache_dir()
+    print(f"Bundling embedding models into: {cache_dir}\n")
+
+    for model_name in models:
+        print(f"── {model_name} ──")
+        try:
+            _ensure_embedding_model(model_name)
+            vecs = embed_texts(["test"], model_name=model_name)
+            print(f"  Verified (dim={len(vecs[0])})\n")
+        except SystemExit:
+            print(f"  FAILED — see errors above.\n")
+            sys.exit(1)
+
+    print("All models bundled successfully.")
+    print(f"Cache: {cache_dir}")
+    print("\nTo deploy offline, copy the data/models/ folder to the target machine.")
+
+
 def cmd_serve(args: argparse.Namespace) -> None:
     """Start the FastAPI server."""
     import uvicorn
 
     from doc_qa.api.server import create_app
+    from doc_qa.indexing.model_selector import resolve_model_name
 
     config = load_config(Path(args.config) if args.config else None)
 
+    # ── Resolve "auto" to a concrete model name ──
+    raw_model = config.indexing.embedding_model
+    resolved_model = resolve_model_name(raw_model)
+    if raw_model == "auto":
+        print(f"  Embedding model: auto-selected → {resolved_model}")
+    config.indexing.embedding_model = resolved_model
+
     # ── Pre-download embedding model (internet required on first run only) ──
-    _ensure_embedding_model(config.indexing.embedding_model)
+    _ensure_embedding_model(resolved_model)
+
+    # ── Dimension mismatch warning ──
+    try:
+        from doc_qa.indexing.embedder import get_embedding_dimension
+
+        expected_dim = get_embedding_dimension(resolved_model)
+        db_path_check = resolve_db_path(config, config.doc_repo.path or ".")
+        index_db = Path(db_path_check)
+        if index_db.exists():
+            import lancedb
+
+            db = lancedb.connect(db_path_check)
+            if "chunks" in db.list_tables().tables:
+                table = db.open_table("chunks")
+                if table.count_rows() > 0:
+                    # Read vector column schema to get stored dimension
+                    schema = table.schema
+                    for field in schema:
+                        if field.name == "vector":
+                            # pyarrow list type: list<item: float>[dim]
+                            index_dim = field.type.list_size
+                            if index_dim and index_dim != expected_dim:
+                                print(
+                                    f"\n  Warning: Index was built with {index_dim}d embeddings "
+                                    f"but current model uses {expected_dim}d. Re-indexing recommended.\n"
+                                )
+                            break
+    except Exception:
+        pass  # Non-fatal — dimension check is best-effort
 
     # Resolve repo path: CLI flag → config.yaml → None (configure from UI)
     repo_str: str | None = args.repo
@@ -619,10 +707,6 @@ def main() -> None:
     p_eval.set_defaults(func=cmd_eval)
 
     # db command
-    p_db = sub.add_parser("db", help="Run database migrations")
-    p_db.add_argument("action", choices=["upgrade", "downgrade"], help="Migration action")
-    p_db.add_argument("revision", nargs="?", default=None, help="Target revision (default: head/−1)")
-    p_db.set_defaults(func=cmd_db)
 
     # download-model command
     p_dl = sub.add_parser("download-model", help="Download the embedding model (run once with internet)")
@@ -638,6 +722,26 @@ def main() -> None:
         help="Path to the downloaded sentence-transformers-all-MiniLM-L6-v2.tar.gz file",
     )
     p_install.set_defaults(func=cmd_install_model)
+
+    # bundle-models command
+    p_bundle = sub.add_parser("bundle-models", help="Pre-download both embedding models for offline deployment")
+    p_bundle.set_defaults(func=cmd_bundle_models)
+
+    # feedback-export command
+    p_fb = sub.add_parser("feedback-export", help="Export positive feedback as eval test cases")
+    p_fb.add_argument("--output", required=True, help="Output path for test_cases.json")
+    p_fb.add_argument(
+        "--merge-with",
+        default=None,
+        help="Path to existing test_cases.json to merge with (deduplicates by question)",
+    )
+    p_fb.add_argument(
+        "--min-confidence",
+        type=float,
+        default=0.6,
+        help="Minimum confidence threshold for inclusion (default: 0.6)",
+    )
+    p_fb.set_defaults(func=cmd_feedback_export)
 
     # serve command
     p_serve = sub.add_parser("serve", help="Start the API server")

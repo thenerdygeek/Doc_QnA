@@ -31,6 +31,8 @@ class RetrievedChunk:
     vector: list[float] | None = None
     doc_date: float = 0.0  # Unix timestamp for version-aware dedup
     content_type: str = "prose"  # "prose", "code", "table", or "mixed"
+    parent_chunk_id: str = ""
+    parent_text: str = ""
 
 
 class HybridRetriever:
@@ -326,6 +328,8 @@ class HybridRetriever:
                     vector=arrow_table.column("vector")[i].as_py() if "vector" in col_names else None,
                     doc_date=float(arrow_table.column("doc_date")[i].as_py()) if "doc_date" in col_names else 0.0,
                     content_type=arrow_table.column("content_type")[i].as_py() if "content_type" in col_names else "prose",
+                    parent_chunk_id=arrow_table.column("parent_chunk_id")[i].as_py() if "parent_chunk_id" in col_names else "",
+                    parent_text=arrow_table.column("parent_text")[i].as_py() if "parent_text" in col_names else "",
                 )
             )
 

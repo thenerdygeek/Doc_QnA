@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
+import os
+
 _IS_WINDOWS = sys.platform == "win32"
 
 import pyarrow as pa
@@ -30,10 +32,10 @@ from doc_qa.retrieval.retriever import HybridRetriever
 logger = logging.getLogger(__name__)
 
 # ── Parallel processing settings ─────────────────────────────────
-_MAX_WORKERS = 4          # parallel file parsing/chunking threads
-_EMBED_BATCH_SIZE = 50    # files to accumulate before bulk embedding + insert
-_CHUNK_SUB_BATCH = 500    # max chunks to embed+insert in one go (controls memory)
-_MAX_EVENT_BUFFER = 200   # max events kept for SSE replay on reconnect
+_MAX_WORKERS = min(os.cpu_count() or 4, 16)  # scale with CPU, cap at 16
+_EMBED_BATCH_SIZE = 75    # files to accumulate before bulk embedding + insert
+_CHUNK_SUB_BATCH = 1000   # max chunks to embed+insert in one go (controls memory)
+_MAX_EVENT_BUFFER = 500   # max events kept for SSE replay on reconnect
 
 
 # ── State machine ────────────────────────────────────────────────
@@ -323,6 +325,9 @@ class IndexingJob:
             min_chunk_size = self.config.indexing.min_chunk_size
             chunking_strategy = self.config.indexing.chunking_strategy
             embedding_model = self.config.indexing.embedding_model
+            enable_parent_child = self.config.indexing.enable_parent_child
+            parent_chunk_size = self.config.indexing.parent_chunk_size
+            child_chunk_size = self.config.indexing.child_chunk_size
 
             # Parse and chunk files in parallel, then batch-insert embeddings.
             # This gives ~3-4x speedup over sequential processing.
@@ -355,6 +360,9 @@ class IndexingJob:
                             min_chunk_size,
                             chunking_strategy,
                             embedding_model,
+                            enable_parent_child,
+                            parent_chunk_size,
+                            child_chunk_size,
                         )
                         af = asyncio.wrap_future(cf, loop=loop)
                         async_futures[af] = str(fp)
@@ -492,6 +500,9 @@ def _parse_and_chunk(
     min_chunk_size: int,
     chunking_strategy: str = "paragraph",
     embedding_model: str = "nomic-ai/nomic-embed-text-v1.5",
+    enable_parent_child: bool = False,
+    parent_chunk_size: int = 1024,
+    child_chunk_size: int = 256,
 ) -> dict[str, Any]:
     """Parse and chunk a single file (CPU-only, no embedding or DB writes).
 
@@ -504,15 +515,28 @@ def _parse_and_chunk(
         if not sections:
             return {"chunks": [], "sections": 0, "skipped": True, "file_hash": ""}
 
-        chunks = chunk_sections(
-            sections,
-            file_path=file_path,
-            max_tokens=chunk_size,
-            overlap_tokens=chunk_overlap,
-            min_tokens=min_chunk_size,
-            chunking_strategy=chunking_strategy,
-            embedding_model=embedding_model,
-        )
+        if enable_parent_child:
+            from doc_qa.indexing.chunker import chunk_sections_parent_child
+            chunks = chunk_sections_parent_child(
+                sections,
+                file_path=file_path,
+                parent_max_tokens=parent_chunk_size,
+                child_max_tokens=child_chunk_size,
+                overlap_tokens=chunk_overlap,
+                min_tokens=min_chunk_size,
+                chunking_strategy=chunking_strategy,
+                embedding_model=embedding_model,
+            )
+        else:
+            chunks = chunk_sections(
+                sections,
+                file_path=file_path,
+                max_tokens=chunk_size,
+                overlap_tokens=chunk_overlap,
+                min_tokens=min_chunk_size,
+                chunking_strategy=chunking_strategy,
+                embedding_model=embedding_model,
+            )
         if not chunks:
             return {"chunks": [], "sections": len(sections), "skipped": True, "file_hash": ""}
 
@@ -815,51 +839,63 @@ def _copy_unchanged_chunks(
     This avoids re-embedding unchanged files — the existing vectors are
     copied directly, which is orders of magnitude faster.
 
-    For large tables (100K+ chunks), copies in batches to avoid holding
-    the entire table in memory at once.
+    Uses filtered queries instead of full-table materialisation so that
+    only matching rows are loaded into memory.  This is critical for
+    large repos (2900+ files / 100K+ chunks) where the full Arrow table
+    would exceed available RAM.
 
     Returns the number of chunks copied.
     """
     if not unchanged_files:
         return 0
 
-    _COPY_BATCH = 2000  # files per batch for the IS_IN filter
+    # Number of file paths per WHERE clause.  200 OR conditions is well
+    # within LanceDB's query parser limits and keeps each result set small.
+    _QUERY_BATCH = 200
 
     try:
-        import pyarrow.compute as pc
-
         prod_index = DocIndex(db_path=prod_db_path, embedding_model=embedding_model)
 
-        # For small file sets, do a single pass (simpler & faster)
         unchanged_list = list(unchanged_files)
         total_copied = 0
 
-        # Process in batches to control memory — each batch loads the
-        # full table but filters to a subset of files, keeping the
-        # filtered Arrow table small.
-        for batch_start in range(0, len(unchanged_list), _COPY_BATCH):
-            batch_files = unchanged_list[batch_start : batch_start + _COPY_BATCH]
-            value_set = pa.array(batch_files)
+        for batch_start in range(0, len(unchanged_list), _QUERY_BATCH):
+            batch_files = unchanged_list[batch_start : batch_start + _QUERY_BATCH]
 
-            # Load and filter — LanceDB memory-maps the lance files so
-            # to_arrow() is reasonably efficient, but the result is a
-            # full materialized Arrow table.
-            arrow_table = prod_index._table.to_arrow()
-            file_col = arrow_table.column("file_path")
-            mask = pc.is_in(file_col, value_set=value_set)
-            filtered = arrow_table.filter(mask)
+            # Build an OR filter — only matching rows are loaded from disk.
+            conditions = []
+            for fp in batch_files:
+                safe = fp.replace("\\", "\\\\").replace('"', '\\"')
+                conditions.append(f'file_path = "{safe}"')
+            where_clause = " OR ".join(conditions)
 
-            if filtered.num_rows > 0:
-                temp_index._table.add(filtered)
-                total_copied += filtered.num_rows
+            # Filtered query: returns only rows for these files.
+            # .search() without a vector query acts as a full-scan with
+            # server-side WHERE, avoiding full-table Arrow materialisation.
+            filtered = (
+                prod_index._table.search()
+                .where(where_clause, prefilter=True)
+                .limit(500_000)
+                .to_arrow()
+            )
 
-            # Release references so GC can reclaim memory before next batch
-            del arrow_table, file_col, mask, filtered
+            if filtered.num_rows == 0:
+                continue
+
+            # Drop internal columns (_distance, _score, _rowid) that
+            # LanceDB search may add — they're not part of our schema.
+            drop_cols = [c for c in filtered.column_names if c.startswith("_")]
+            if drop_cols:
+                filtered = filtered.drop(drop_cols)
+
+            temp_index._table.add(filtered)
+            total_copied += filtered.num_rows
+            del filtered
 
         if total_copied > 0:
-            logger.info("Copied %d unchanged chunks to temp index", total_copied)
+            logger.info("Copied %d unchanged chunks to temp index.", total_copied)
         return total_copied
 
     except Exception as exc:
-        logger.warning("Failed to copy unchanged chunks: %s — will re-index all", exc)
+        logger.warning("Failed to copy unchanged chunks: %s — will re-index all.", exc)
         return 0

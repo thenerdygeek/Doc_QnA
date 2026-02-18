@@ -7,6 +7,7 @@ import pytest
 
 aiosqlite = pytest.importorskip("aiosqlite", reason="aiosqlite not installed")
 
+from doc_qa.api.server import _QueryResultCache
 from doc_qa.feedback.store import (
     FeedbackRecord,
     export_positive_feedback,
@@ -211,3 +212,69 @@ class TestExportPositiveFeedback:
         assert "answer" in record
         assert "chunks_used" in record
         assert "confidence" in record
+
+
+class TestQueryResultCache:
+    """Tests for the in-memory _QueryResultCache used for feedback data capture."""
+
+    def test_put_and_get(self) -> None:
+        """Stored data is retrievable by query_id."""
+        cache = _QueryResultCache(ttl=60, max_size=10)
+        cache.put("q1", {"question": "What is X?", "answer": "X is Y."})
+        result = cache.get("q1")
+        assert result is not None
+        assert result["question"] == "What is X?"
+
+    def test_missing_key_returns_none(self) -> None:
+        """Unknown query_id returns None."""
+        cache = _QueryResultCache(ttl=60, max_size=10)
+        assert cache.get("nonexistent") is None
+
+    def test_ttl_expiry(self) -> None:
+        """Expired entries return None."""
+        cache = _QueryResultCache(ttl=0, max_size=10)  # 0s TTL = immediate expiry
+        cache.put("q1", {"question": "Q"})
+        # TTL=0 means the entry expires immediately on the next get
+        import time
+        time.sleep(0.01)
+        assert cache.get("q1") is None
+
+    def test_max_size_eviction(self) -> None:
+        """When cache is full, oldest entry is evicted."""
+        cache = _QueryResultCache(ttl=600, max_size=2)
+        cache.put("q1", {"n": 1})
+        cache.put("q2", {"n": 2})
+        cache.put("q3", {"n": 3})  # should evict q1
+        assert cache.get("q1") is None
+        assert cache.get("q2") is not None
+        assert cache.get("q3") is not None
+
+    def test_feedback_with_cache_populates_fields(self, _setup_db: str) -> None:
+        """When cache has data, FeedbackRecord gets populated."""
+        cache = _QueryResultCache(ttl=60, max_size=10)
+        cache.put("qid_abc", {
+            "question": "What is auth?",
+            "answer": "Auth uses JWT.",
+            "chunks_used": ["auth.md#0", "auth.md#1"],
+            "scores": [0.95, 0.88],
+            "confidence": 0.91,
+            "verification_passed": True,
+        })
+
+        cached = cache.get("qid_abc")
+        assert cached is not None
+
+        record = FeedbackRecord(
+            query_id="qid_abc",
+            question=cached["question"],
+            answer=cached["answer"],
+            chunks_used=cached["chunks_used"],
+            scores=cached["scores"],
+            confidence=cached["confidence"],
+            verification_passed=cached["verification_passed"],
+            rating=1,
+        )
+        assert record.question == "What is auth?"
+        assert record.answer == "Auth uses JWT."
+        assert record.chunks_used == ["auth.md#0", "auth.md#1"]
+        assert record.confidence == 0.91

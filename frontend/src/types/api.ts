@@ -41,11 +41,19 @@ export interface ComponentHealth {
   chunks?: number;
 }
 
+export interface EmbeddingModelInfo {
+  configured: string;
+  resolved: string;
+  ram_gb: number;
+  ram_sufficient: boolean;
+}
+
 export interface HealthResponse {
   status: string;
   components?: {
     index?: ComponentHealth;
   };
+  embedding_model?: EmbeddingModelInfo;
 }
 
 export interface LLMModel {
@@ -104,6 +112,14 @@ export interface RetrievalResponse {
   chunks: RetrievalChunkResponse[];
 }
 
+// ── Feedback types ──────────────────────────────────────────────
+
+export interface FeedbackRequest {
+  query_id: string;
+  rating: number; // -1 (bad) | 1 (good)
+  comment?: string;
+}
+
 // ── Config types ────────────────────────────────────────────────
 
 /** Full config as returned by GET /api/config (secrets redacted). */
@@ -113,17 +129,6 @@ export interface ConfigUpdateResponse {
   saved: boolean;
   restart_required: boolean;
   restart_sections: string[];
-}
-
-export interface DbTestResponse {
-  ok: boolean;
-  error?: string;
-}
-
-export interface DbMigrateResponse {
-  ok: boolean;
-  error?: string;
-  revision?: string;
 }
 
 // ── Conversation persistence types ──────────────────────────────

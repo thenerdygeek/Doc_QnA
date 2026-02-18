@@ -92,6 +92,14 @@ class QueryPipeline:
         hyde_weight: float = 0.7,
         section_level_boost: float = 0.0,
         recency_boost: float = 0.0,
+        adaptive_min_score: bool = True,
+        adaptive_std_factor: float = 1.0,
+        adaptive_floor: float = 0.15,
+        dynamic_top_k: bool = True,
+        dynamic_max_k: int = 10,
+        dynamic_gap_threshold: float = 0.10,
+        enable_parent_retrieval: bool = False,
+        feedback_config: Any | None = None,
     ) -> None:
         self._retriever = HybridRetriever(
             table=table,
@@ -119,6 +127,14 @@ class QueryPipeline:
         self._enable_query_expansion = enable_query_expansion
         self._max_expansion_queries = max_expansion_queries
         self._hyde_weight = hyde_weight
+        self._adaptive_min_score = adaptive_min_score
+        self._adaptive_std_factor = adaptive_std_factor
+        self._adaptive_floor = adaptive_floor
+        self._dynamic_top_k = dynamic_top_k
+        self._dynamic_max_k = dynamic_max_k
+        self._dynamic_gap_threshold = dynamic_gap_threshold
+        self._enable_parent_retrieval = enable_parent_retrieval
+        self._feedback_config = feedback_config
 
     async def query(self, question: str) -> QueryResult:
         """Execute the full query pipeline with optional intelligence features."""
@@ -339,8 +355,42 @@ class QueryPipeline:
             reranked = rerank(query=question, chunks=candidates, model_name=self._reranker_model, top_k=None)
             logger.info("Reranked to %d chunks.", len(reranked))
 
+        # ── Feedback-based score boost ────────────────────────────
+        if (
+            self._feedback_config is not None
+            and getattr(self._feedback_config, "enable_score_boost", False)
+        ):
+            try:
+                from doc_qa.feedback.store import get_chunk_feedback_scores
+                from doc_qa.retrieval.feedback_booster import apply_chunk_feedback_boost
+
+                fb_scores = await get_chunk_feedback_scores()
+                if fb_scores:
+                    apply_chunk_feedback_boost(
+                        reranked,
+                        fb_scores,
+                        max_boost=getattr(self._feedback_config, "boost_max", 0.10),
+                    )
+            except Exception:
+                logger.debug("Feedback boost unavailable.", exc_info=True)
+
         # ── Post-rerank score filter ──────────────────────────────
-        if self._reranker_min_score > 0 and reranked:
+        if self._adaptive_min_score and len(reranked) >= 3:
+            from doc_qa.retrieval.adaptive_filtering import compute_adaptive_min_score
+            from doc_qa.retrieval.score_normalizer import filter_by_score
+            threshold = compute_adaptive_min_score(
+                reranked,
+                std_factor=self._adaptive_std_factor,
+                floor=self._adaptive_floor,
+            )
+            before = len(reranked)
+            reranked = filter_by_score(reranked, threshold)
+            if len(reranked) < before:
+                logger.info(
+                    "Adaptive score filter: %d → %d chunks (threshold=%.3f).",
+                    before, len(reranked), threshold,
+                )
+        elif self._reranker_min_score > 0 and reranked:
             from doc_qa.retrieval.score_normalizer import filter_by_score
             before = len(reranked)
             reranked = filter_by_score(reranked, self._reranker_min_score)
@@ -352,7 +402,23 @@ class QueryPipeline:
 
         # ── File diversity cap ────────────────────────────────────
         diverse = self._apply_file_diversity(reranked)
-        top_chunks = diverse[: self._top_k]
+
+        # ── Dynamic top_k ────────────────────────────────────────
+        if self._dynamic_top_k and len(diverse) > 2:
+            from doc_qa.retrieval.adaptive_filtering import compute_dynamic_top_k
+            effective_k = compute_dynamic_top_k(
+                diverse,
+                base_k=self._top_k,
+                max_k=self._dynamic_max_k,
+                gap_threshold=self._dynamic_gap_threshold,
+            )
+            top_chunks = diverse[:effective_k]
+            if effective_k != self._top_k:
+                logger.info(
+                    "Dynamic top_k: %d (config: %d).", effective_k, self._top_k,
+                )
+        else:
+            top_chunks = diverse[: self._top_k]
 
         # ── Context reordering (anti "lost in middle") ────────────
         if self._context_reorder:
@@ -684,12 +750,19 @@ class QueryPipeline:
             reordered.append(chunks[i])        # even positions reversed
         return reordered
 
-    @staticmethod
-    def _build_context(chunks: list[RetrievedChunk]) -> str:
+    def _build_context(self, chunks: list[RetrievedChunk]) -> str:
         """Format retrieved chunks into a context string for the LLM.
+
+        When ``enable_parent_retrieval`` is True and chunks have non-empty
+        ``parent_text``, uses the parent text instead of the child text.
+        Deduplicates by ``parent_chunk_id`` so that multiple children from
+        the same parent are included only once.
 
         Includes document dates when available so the LLM can prefer
         more recent sources when information conflicts.
+
+        Table chunks are annotated with ``[Table]`` in the header so the
+        LLM knows to preserve tabular structure in answers.
         """
         if not chunks:
             return ""
@@ -697,7 +770,25 @@ class QueryPipeline:
         from datetime import datetime, timezone
 
         parts: list[str] = []
+        seen_parents: set[str] = set()
+        has_table_chunk = False
+
         for i, chunk in enumerate(chunks, 1):
+            # Parent dedup: if parent retrieval is enabled and chunk has
+            # a parent, use parent text and skip duplicate parents.
+            use_parent = (
+                self._enable_parent_retrieval
+                and chunk.parent_chunk_id
+                and chunk.parent_text
+            )
+            if use_parent:
+                if chunk.parent_chunk_id in seen_parents:
+                    continue
+                seen_parents.add(chunk.parent_chunk_id)
+                text = chunk.parent_text
+            else:
+                text = chunk.text
+
             filename = Path(chunk.file_path).name
             header = f"[Source {i}: {filename}"
             # Include document date if available
@@ -708,10 +799,21 @@ class QueryPipeline:
                 header += f" ({date_str})"
             if chunk.section_title:
                 header += f" > {chunk.section_title}"
+            # Annotate table chunks
+            if chunk.content_type in ("table", "mixed"):
+                header += " [Table]"
+                has_table_chunk = True
             header += f"] (score: {chunk.score:.3f})"
 
             parts.append(header)
-            parts.append(chunk.text)
+            parts.append(text)
             parts.append("")  # blank line separator
 
-        return "\n".join(parts)
+        context = "\n".join(parts)
+
+        # Inject table-aware hint when context contains tabular data
+        if has_table_chunk:
+            from doc_qa.llm.prompt_templates import TABLE_CONTEXT_HINT
+            context = TABLE_CONTEXT_HINT + "\n\n" + context
+
+        return context

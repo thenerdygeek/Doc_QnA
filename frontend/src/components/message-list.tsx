@@ -7,6 +7,7 @@ import { SourcesList } from "./sources-list";
 import { AttributionList } from "./attribution-list";
 import { StatusIndicator } from "./status-indicator";
 import { ConfidenceBadge } from "./confidence-badge";
+import { FeedbackButtons } from "./feedback-buttons";
 import { ErrorDisplay } from "./error-display";
 import type { StreamingQueryState } from "@/hooks/use-streaming-query";
 
@@ -65,6 +66,15 @@ const MessageItem = memo(function MessageItem({ msg, index, messages, onRetry, p
   const isUser = msg.role === "user";
   const isStreaming = msg.streaming?.phase === "streaming";
   const isComplete = msg.streaming?.phase === "complete";
+  const [highlightedSource, setHighlightedSource] = useState<number | null>(null);
+
+  const handleCitationClick = (num: number) => {
+    setHighlightedSource(num);
+    const card = document.getElementById(`source-card-${num}`);
+    card?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    // Clear highlight after 3 seconds
+    setTimeout(() => setHighlightedSource(null), 3000);
+  };
 
   return (
     <motion.div
@@ -119,11 +129,13 @@ const MessageItem = memo(function MessageItem({ msg, index, messages, onRetry, p
                 tokens={msg.streaming?.tokens ?? ""}
                 finalAnswer={msg.streaming?.answer ?? msg.content}
                 isStreaming={!!isStreaming}
+                citations={msg.streaming?.citations}
+                onCitationClick={handleCitationClick}
               />
             )}
             {msg.streaming &&
               msg.streaming.sources.length > 0 && (
-                <SourcesList sources={msg.streaming.sources} />
+                <SourcesList sources={msg.streaming.sources} highlightedSource={highlightedSource} />
               )}
             {msg.streaming &&
               msg.streaming.attributions.length > 0 && (
@@ -138,6 +150,10 @@ const MessageItem = memo(function MessageItem({ msg, index, messages, onRetry, p
                   confidence={msg.streaming.verification.confidence}
                 />
               )}
+              {msg.streaming?.phase === "complete" &&
+                msg.streaming.queryId && (
+                  <FeedbackButtons queryId={msg.streaming.queryId} />
+                )}
               {msg.streaming?.phase === "complete" &&
                 msg.streaming.elapsed != null && (
                   <span className="text-xs text-muted-foreground">

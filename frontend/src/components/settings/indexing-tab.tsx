@@ -26,6 +26,13 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 import { api } from "@/api/client";
 import type { UseSettingsReturn } from "@/hooks/use-settings";
 import type { UseIndexingReturn } from "@/hooks/use-indexing";
@@ -168,7 +175,10 @@ export function IndexingTab({ settings, indexing }: { settings: UseSettingsRetur
         chunk_size: 512,
         chunk_overlap: 50,
         min_chunk_size: 100,
-        embedding_model: "sentence-transformers/all-MiniLM-L6-v2",
+        embedding_model: "auto",
+        enable_parent_child: false,
+        parent_chunk_size: 1024,
+        child_chunk_size: 256,
     });
     const [saved, setSaved] = useState(false);
 
@@ -179,7 +189,10 @@ export function IndexingTab({ settings, indexing }: { settings: UseSettingsRetur
             chunk_size: field(config, "indexing", "chunk_size", 512),
             chunk_overlap: field(config, "indexing", "chunk_overlap", 50),
             min_chunk_size: field(config, "indexing", "min_chunk_size", 100),
-            embedding_model: field(config, "indexing", "embedding_model", "sentence-transformers/all-MiniLM-L6-v2"),
+            embedding_model: field(config, "indexing", "embedding_model", "auto"),
+            enable_parent_child: field(config, "indexing", "enable_parent_child", false),
+            parent_chunk_size: field(config, "indexing", "parent_chunk_size", 1024),
+            child_chunk_size: field(config, "indexing", "child_chunk_size", 256),
         });
     }, [config]);
 
@@ -397,7 +410,49 @@ export function IndexingTab({ settings, indexing }: { settings: UseSettingsRetur
                 </div>
                 <div className="mt-4 space-y-2">
                     <Label htmlFor="embed-model">Embedding Model</Label>
-                    <Input id="embed-model" value={form.embedding_model} onChange={(e) => setForm((f) => ({ ...f, embedding_model: e.target.value }))} />
+                    <Select value={form.embedding_model} onValueChange={(v) => setForm((f) => ({ ...f, embedding_model: v }))}>
+                        <SelectTrigger id="embed-model"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="auto">Auto-detect (recommended)</SelectItem>
+                            <SelectItem value="nomic-ai/nomic-embed-text-v1.5">Nomic v1.5 (768d, best quality)</SelectItem>
+                            <SelectItem value="sentence-transformers/all-MiniLM-L6-v2">MiniLM L6 (384d, low RAM)</SelectItem>
+                        </SelectContent>
+                    </Select>
+                    <p className="text-[11px] text-muted-foreground">
+                        Auto-detect selects the best model based on available system RAM.
+                    </p>
+                    <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                        Changing the model requires re-indexing.
+                    </p>
+                </div>
+
+                {/* ── Parent-child retrieval ──────────────────────── */}
+                <div className="mt-4 border-t border-border/40 pt-4">
+                    <h4 className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Parent-Child Chunking
+                    </h4>
+                    <div className="space-y-3">
+                        <div className="flex items-center gap-3">
+                            <Switch checked={form.enable_parent_child} onCheckedChange={(v) => setForm((f) => ({ ...f, enable_parent_child: v }))} id="parent-child" />
+                            <div>
+                                <Label htmlFor="parent-child">Enable Parent-Child Retrieval</Label>
+                                <p className="text-[11px] text-muted-foreground">Search small chunks for precision, return parent chunks for context</p>
+                            </div>
+                        </div>
+                        {form.enable_parent_child && (
+                            <div className="ml-10 grid grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <Label htmlFor="parent-size">Parent Chunk Size</Label>
+                                    <Input id="parent-size" type="number" min={256} max={4096} value={form.parent_chunk_size} onChange={(e) => setForm((f) => ({ ...f, parent_chunk_size: +e.target.value }))} />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="child-size">Child Chunk Size</Label>
+                                    <Input id="child-size" type="number" min={64} max={512} value={form.child_chunk_size} onChange={(e) => setForm((f) => ({ ...f, child_chunk_size: +e.target.value }))} />
+                                </div>
+                            </div>
+                        )}
+                        <p className="text-[11px] text-amber-600 dark:text-amber-400">Requires re-indexing to take effect.</p>
+                    </div>
                 </div>
                 <SaveButton onClick={handleSave} saving={saving} saved={saved} />
             </div>

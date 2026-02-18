@@ -7,11 +7,15 @@ import "streamdown/styles.css";
 
 const plugins = { code, mermaid };
 
+import type { CitationInfo } from "@/types/sse";
+
 interface StreamingAnswerProps {
   thinkingTokens?: string;
   tokens: string;
   finalAnswer: string | null;
   isStreaming: boolean;
+  citations?: CitationInfo[];
+  onCitationClick?: (num: number) => void;
 }
 
 export function StreamingAnswer({
@@ -19,6 +23,8 @@ export function StreamingAnswer({
   tokens,
   finalAnswer,
   isStreaming,
+  citations = [],
+  onCitationClick,
 }: StreamingAnswerProps) {
   const content = isStreaming ? tokens : (finalAnswer ?? "");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -78,6 +84,64 @@ export function StreamingAnswer({
         .forEach((btn) => btn.remove());
     };
   }, [isStreaming, content]);
+
+  // Inject citation badges after streaming completes
+  useEffect(() => {
+    if (isStreaming || !citations.length) return;
+
+    const container = containerRef.current;
+    if (!container) return;
+
+    const citationNums = new Set(citations.map((c) => c.number));
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    const replacements: { node: Text; frag: DocumentFragment }[] = [];
+
+    while (walker.nextNode()) {
+      const textNode = walker.currentNode as Text;
+      const text = textNode.textContent ?? "";
+      if (!/\[\d+\]/.test(text)) continue;
+
+      const frag = document.createDocumentFragment();
+      let lastIdx = 0;
+      const re = /\[(\d+)\]/g;
+      let m: RegExpExecArray | null;
+
+      while ((m = re.exec(text)) !== null) {
+        const num = parseInt(m[1]!, 10);
+        if (!citationNums.has(num)) continue;
+
+        if (m.index > lastIdx) {
+          frag.appendChild(document.createTextNode(text.slice(lastIdx, m.index)));
+        }
+        const btn = document.createElement("button");
+        btn.className = "citation-badge";
+        btn.textContent = `${num}`;
+        btn.setAttribute("aria-label", `Citation ${num}`);
+        btn.setAttribute("type", "button");
+        btn.addEventListener("click", () => onCitationClick?.(num));
+        frag.appendChild(btn);
+        lastIdx = m.index + m[0].length;
+      }
+
+      if (lastIdx > 0) {
+        if (lastIdx < text.length) {
+          frag.appendChild(document.createTextNode(text.slice(lastIdx)));
+        }
+        replacements.push({ node: textNode, frag });
+      }
+    }
+
+    for (const { node, frag } of replacements) {
+      node.parentNode?.replaceChild(frag, node);
+    }
+
+    return () => {
+      container.querySelectorAll(".citation-badge").forEach((btn) => {
+        const text = document.createTextNode(`[${btn.textContent}]`);
+        btn.parentNode?.replaceChild(text, btn);
+      });
+    };
+  }, [isStreaming, citations, onCitationClick]);
 
   // Skeleton shimmer while waiting for first token
   if (!content && !thinkingTokens && isStreaming) {

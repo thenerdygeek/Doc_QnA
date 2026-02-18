@@ -36,7 +36,7 @@ export default function App() {
   });
   const stream = useStreamingQuery();
   const { sessionId, setSessionId, clearSession } = useSession();
-  const { conversations, dbEnabled, refresh, deleteConversation } =
+  const { conversations, refresh, deleteConversation } =
     useConversations();
   const settings = useSettings();
   const tour = useTour();
@@ -125,11 +125,11 @@ export default function App() {
 
   // Refresh sidebar after stream completes
   useEffect(() => {
-    if (stream.phase === "complete" && dbEnabled) {
+    if (stream.phase === "complete") {
       refresh();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stream.phase, dbEnabled]);
+  }, [stream.phase]);
 
   const handleSelectConversation = useCallback(
     async (id: string) => {
@@ -175,7 +175,7 @@ export default function App() {
   });
 
   const isEmpty = messages.length === 0;
-  const showSidebar = dbEnabled === true;
+  const showSidebar = true;
 
   return (
     <div className="flex h-screen bg-background">
@@ -251,7 +251,7 @@ export default function App() {
           transition={{ duration: 0.4, delay: 0.1, ease: "easeOut" }}
           className="flex min-h-0 flex-1 flex-col"
         >
-          <div id="main-content">
+          <div id="main-content" className="min-h-0 flex-1">
             {isEmpty ? (
               <WelcomeScreen onSelectQuestion={submitQuestion} />
             ) : (
@@ -272,7 +272,7 @@ export default function App() {
           />
         </motion.div>
         {/* Consolidated footer — tour link + attribution in one row */}
-        <div className="flex items-center justify-between border-t border-border/20 px-4 py-1.5">
+        <div className="flex shrink-0 items-center justify-between border-t border-border/20 px-4 py-1.5">
           {!tour.active ? (
             <button
               type="button"
@@ -299,7 +299,6 @@ export default function App() {
         onOpenChange={settings.setOpen}
         settings={settings}
         tour={tour}
-        onDbSaved={refresh}
         indexing={indexing}
       />
     </div>

@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/api/client";
-import type {
-  ConfigData,
-  DbTestResponse,
-  DbMigrateResponse,
-} from "@/types/api";
+import type { ConfigData } from "@/types/api";
 
 export interface UseSettingsReturn {
   /** Current config (null until first fetch). */
@@ -21,12 +17,6 @@ export interface UseSettingsReturn {
   ) => Promise<string[]>;
   /** True while a save is in flight. */
   saving: boolean;
-  /** Test a database connection URL. */
-  testDbConnection: (url: string) => Promise<DbTestResponse>;
-  dbTestResult: DbTestResponse | null;
-  /** Run Alembic migrations. */
-  runMigrations: () => Promise<DbMigrateResponse>;
-  migrateResult: DbMigrateResponse | null;
   /** Accumulated section names that require a restart. */
   restartRequired: string[];
 }
@@ -36,10 +26,6 @@ export function useSettings(): UseSettingsReturn {
   const [config, setConfig] = useState<ConfigData | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [dbTestResult, setDbTestResult] = useState<DbTestResponse | null>(null);
-  const [migrateResult, setMigrateResult] = useState<DbMigrateResponse | null>(
-    null,
-  );
   const [restartRequired, setRestartRequired] = useState<string[]>([]);
   const fetched = useRef(false);
 
@@ -80,20 +66,6 @@ export function useSettings(): UseSettingsReturn {
     [],
   );
 
-  const testDbConnection = useCallback(async (url: string) => {
-    setDbTestResult(null);
-    const res = await api.config.dbTest(url);
-    setDbTestResult(res);
-    return res;
-  }, []);
-
-  const runMigrations = useCallback(async () => {
-    setMigrateResult(null);
-    const res = await api.config.dbMigrate();
-    setMigrateResult(res);
-    return res;
-  }, []);
-
   return {
     config,
     loading,
@@ -101,10 +73,6 @@ export function useSettings(): UseSettingsReturn {
     setOpen,
     updateSection,
     saving,
-    testDbConnection,
-    dbTestResult,
-    runMigrations,
-    migrateResult,
     restartRequired,
   };
 }

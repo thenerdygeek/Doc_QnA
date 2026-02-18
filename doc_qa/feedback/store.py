@@ -112,6 +112,59 @@ async def get_feedback_stats() -> dict[str, Any]:
         }
 
 
+async def get_chunk_feedback_scores() -> dict[str, float]:
+    """Aggregate user feedback into per-chunk scores in [-1.0, 1.0].
+
+    For each chunk that appears in rated feedback, computes::
+
+        score = (positive_count - negative_count) / total_count
+
+    Returns:
+        Dict mapping chunk_id → score.  Chunks with no feedback are
+        absent (treated as 0.0 by callers).
+    """
+    import aiosqlite
+
+    async with aiosqlite.connect(_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        rows = await (
+            await db.execute(
+                "SELECT chunks_used, rating FROM feedback WHERE rating != 0"
+            )
+        ).fetchall()
+
+    # Accumulate per-chunk tallies
+    pos: dict[str, int] = {}
+    neg: dict[str, int] = {}
+    total: dict[str, int] = {}
+
+    for row in rows:
+        raw_chunks = row["chunks_used"]
+        rating = int(row["rating"])
+        try:
+            chunk_ids = json.loads(raw_chunks) if isinstance(raw_chunks, str) else raw_chunks
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(chunk_ids, list):
+            continue
+        for cid in chunk_ids:
+            if not isinstance(cid, str) or not cid:
+                continue
+            total[cid] = total.get(cid, 0) + 1
+            if rating > 0:
+                pos[cid] = pos.get(cid, 0) + 1
+            elif rating < 0:
+                neg[cid] = neg.get(cid, 0) + 1
+
+    scores: dict[str, float] = {}
+    for cid, t in total.items():
+        p = pos.get(cid, 0)
+        n = neg.get(cid, 0)
+        scores[cid] = (p - n) / t
+
+    return scores
+
+
 async def export_positive_feedback(limit: int = 100) -> list[dict]:
     """Export positively-rated Q&A pairs for evaluation dataset building."""
     import aiosqlite

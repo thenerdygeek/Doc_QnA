@@ -102,6 +102,52 @@ class FeedbackRequest(BaseModel):
     comment: str = ""
 
 
+# ── Query result cache (for feedback data capture) ──────────────────
+
+
+class _QueryResultCache:
+    """TTL-bounded in-memory cache of recent query results.
+
+    When the SSE stream completes a query, the result (question, answer,
+    chunks, scores, confidence) is cached here keyed by ``query_id``.
+    When the user submits feedback, we look up the cached data so that
+    the FeedbackRecord is populated with real content (not empty strings).
+    """
+
+    __slots__ = ("_cache", "_ttl", "_max_size")
+
+    def __init__(self, ttl: int = 600, max_size: int = 1000) -> None:
+        self._cache: dict[str, tuple[float, dict]] = {}  # query_id -> (timestamp, data)
+        self._ttl = ttl
+        self._max_size = max_size
+
+    def put(self, query_id: str, data: dict) -> None:
+        """Store a query result.  Evicts expired and oldest entries if full."""
+        self._evict_expired()
+        if len(self._cache) >= self._max_size:
+            # Evict oldest entry
+            oldest_key = min(self._cache, key=lambda k: self._cache[k][0])
+            del self._cache[oldest_key]
+        self._cache[query_id] = (time.time(), data)
+
+    def get(self, query_id: str) -> dict | None:
+        """Retrieve cached data for a query_id, or None if missing/expired."""
+        entry = self._cache.get(query_id)
+        if entry is None:
+            return None
+        ts, data = entry
+        if (time.time() - ts) > self._ttl:
+            del self._cache[query_id]
+            return None
+        return data
+
+    def _evict_expired(self) -> None:
+        now = time.time()
+        expired = [k for k, (ts, _) in self._cache.items() if (now - ts) > self._ttl]
+        for k in expired:
+            del self._cache[k]
+
+
 # ── Session store ────────────────────────────────────────────────────
 
 
@@ -125,10 +171,9 @@ class _Session:
 class _SessionStore:
     """In-memory session store with optional DB-backed persistence."""
 
-    def __init__(self, ttl: int = 1800, db_enabled: bool = False) -> None:
+    def __init__(self, ttl: int = 1800) -> None:
         self._sessions: dict[str, _Session] = {}
         self._ttl = ttl
-        self.db_enabled = db_enabled
 
     def get_or_create(self, session_id: str | None) -> tuple[str, _Session]:
         self._cleanup_expired()
@@ -156,10 +201,10 @@ class _SessionStore:
                 return session_id, session
             del self._sessions[session_id]
 
-        # If resuming a DB conversation, load history
-        if session_id and self.db_enabled:
+        # If resuming a conversation, load history from SQLite
+        if session_id:
             try:
-                from doc_qa.db.repository import get_conversation_with_messages
+                from doc_qa.conversations.store import get_conversation_with_messages
 
                 conv = await get_conversation_with_messages(session_id)
                 if conv is not None:
@@ -172,18 +217,17 @@ class _SessionStore:
                     self._sessions[session_id] = session
                     return session_id, session
             except Exception as exc:
-                logger.warning("Failed to load conversation %s from DB: %s", session_id, exc)
+                logger.warning("Failed to load conversation %s: %s", session_id, exc)
 
-        # Create new session, optionally backed by DB
+        # Create new session backed by SQLite
         conversation_id = None
-        if self.db_enabled:
-            try:
-                from doc_qa.db.repository import create_conversation
+        try:
+            from doc_qa.conversations.store import create_conversation
 
-                conv = await create_conversation()
-                conversation_id = conv["id"]
-            except Exception as exc:
-                logger.warning("Failed to create DB conversation: %s", exc)
+            conv = await create_conversation()
+            conversation_id = conv["id"]
+        except Exception as exc:
+            logger.warning("Failed to create conversation: %s", exc)
 
         new_id = conversation_id or uuid.uuid4().hex[:12]
         session = _Session(conversation_id=conversation_id)
@@ -220,6 +264,11 @@ def create_app(
     if repo_path:
         config.doc_repo.path = repo_path
 
+    # Resolve "auto" to a concrete model name (idempotent for non-"auto" values)
+    from doc_qa.indexing.model_selector import resolve_model_name
+
+    config.indexing.embedding_model = resolve_model_name(config.indexing.embedding_model)
+
     # Resolve db_path (uses CWD-relative default when repo_path is empty)
     effective_repo = config.doc_repo.path or "."
     db_path = resolve_db_path(config, effective_repo)
@@ -239,19 +288,15 @@ def create_app(
         mode=config.retrieval.search_mode,
     )
 
-    # Resolve database URL
-    db_url: str | None = None
-    if config.database and config.database.url:
-        from doc_qa.db.engine import get_database_url
-
-        db_url = get_database_url(config.database.url)
-
-    # Session store for multi-turn conversations
-    sessions = _SessionStore(ttl=config.api.session_ttl, db_enabled=db_url is not None)
+    # Session store for multi-turn conversations (SQLite-backed)
+    sessions = _SessionStore(ttl=config.api.session_ttl)
 
     # LLM backend — lazy-initialized
     llm_backend: Any = None
     llm_lock = asyncio.Lock()
+
+    # Query result cache for feedback data capture
+    query_cache = _QueryResultCache(ttl=600, max_size=1000)
 
     # SSE concurrency limiter
     _max_streams = config.streaming.max_concurrent_streams if config.streaming else 20
@@ -315,6 +360,14 @@ def create_app(
             hyde_weight=cfg.retrieval.hyde_weight,
             section_level_boost=cfg.retrieval.section_level_boost,
             recency_boost=cfg.retrieval.recency_boost,
+            adaptive_min_score=cfg.retrieval.adaptive_min_score,
+            adaptive_std_factor=cfg.retrieval.adaptive_std_factor,
+            adaptive_floor=cfg.retrieval.adaptive_floor,
+            dynamic_top_k=cfg.retrieval.dynamic_top_k,
+            dynamic_max_k=cfg.retrieval.dynamic_max_k,
+            dynamic_gap_threshold=cfg.retrieval.dynamic_gap_threshold,
+            enable_parent_retrieval=cfg.retrieval.enable_parent_retrieval,
+            feedback_config=cfg.feedback,
         )
 
     async def _ensure_llm() -> None:
@@ -342,12 +395,14 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
-        # Startup: initialise DB engine if configured
-        if db_url:
-            from doc_qa.db.engine import init_engine
+        # Startup: initialise SQLite conversation store
+        try:
+            from doc_qa.conversations.store import init_conversation_store
 
-            init_engine(db_url)
-            logger.info("Database persistence enabled")
+            conv_db = str(Path(db_path).parent / "conversations.db") if db_path else "./data/conversations.db"
+            await init_conversation_store(conv_db)
+        except Exception as exc:
+            logger.warning("Conversation store initialization failed (non-fatal): %s", exc)
 
         # Startup: initialise feedback SQLite store
         try:
@@ -364,10 +419,6 @@ def create_app(
         # Shutdown
         if llm_backend is not None:
             await llm_backend.close()
-        if db_url:
-            from doc_qa.db.engine import close_engine
-
-            await close_engine()
 
     # ── Build FastAPI app ────────────────────────────────────────────
 
@@ -397,12 +448,24 @@ def create_app(
         except Exception:
             pass
 
-        return {
+        # Embedding model info (best-effort)
+        embedding_info: dict | None = None
+        try:
+            from doc_qa.indexing.model_selector import get_model_info
+
+            embedding_info = get_model_info()
+        except Exception:
+            pass
+
+        result: dict = {
             "status": "ok",
             "components": {
                 "index": {"ok": index_ok, "chunks": index_count},
             },
         }
+        if embedding_info is not None:
+            result["embedding_model"] = embedding_info
+        return result
 
     @app.get("/api/stats", response_model=StatsResponse)
     async def stats() -> StatsResponse:
@@ -460,11 +523,8 @@ def create_app(
             )
         await _ensure_llm()
 
-        # Get or create session (DB-aware when persistence is enabled)
-        if sessions.db_enabled:
-            session_id, session = await sessions.get_or_create_async(req.session_id)
-        else:
-            session_id, session = sessions.get_or_create(req.session_id)
+        # Get or create session (always SQLite-backed)
+        session_id, session = await sessions.get_or_create_async(req.session_id)
 
         # Create pipeline with session history
         pipeline = _create_pipeline(session.history)
@@ -478,6 +538,17 @@ def create_app(
                 status_code=500,
                 detail="An internal error occurred while processing your query.",
             )
+
+        # Cache result for feedback data capture
+        if result.query_id:
+            query_cache.put(result.query_id, {
+                "question": req.question,
+                "answer": result.answer,
+                "chunks_used": result.chunk_ids_used,
+                "scores": result.retrieval_scores,
+                "confidence": result.confidence_score,
+                "verification_passed": result.verification_passed,
+            })
 
         return QueryResponse(
             answer=result.answer,
@@ -508,17 +579,13 @@ def create_app(
 
     @app.get("/api/conversations")
     async def list_conversations(limit: int = 50, offset: int = 0):
-        if not sessions.db_enabled:
-            raise HTTPException(status_code=501, detail="Database not configured")
-        from doc_qa.db.repository import list_conversations as db_list
+        from doc_qa.conversations.store import list_conversations as db_list
 
         return await db_list(limit=limit, offset=offset)
 
     @app.get("/api/conversations/{conversation_id}")
     async def get_conversation(conversation_id: str):
-        if not sessions.db_enabled:
-            raise HTTPException(status_code=501, detail="Database not configured")
-        from doc_qa.db.repository import get_conversation_with_messages
+        from doc_qa.conversations.store import get_conversation_with_messages
 
         conv = await get_conversation_with_messages(conversation_id)
         if conv is None:
@@ -527,9 +594,7 @@ def create_app(
 
     @app.patch("/api/conversations/{conversation_id}")
     async def rename_conversation(conversation_id: str, body: ConversationUpdate):
-        if not sessions.db_enabled:
-            raise HTTPException(status_code=501, detail="Database not configured")
-        from doc_qa.db.repository import update_conversation_title
+        from doc_qa.conversations.store import update_conversation_title
 
         ok = await update_conversation_title(conversation_id, body.title)
         if not ok:
@@ -538,9 +603,7 @@ def create_app(
 
     @app.delete("/api/conversations/{conversation_id}")
     async def delete_conversation_endpoint(conversation_id: str):
-        if not sessions.db_enabled:
-            raise HTTPException(status_code=501, detail="Database not configured")
-        from doc_qa.db.repository import delete_conversation
+        from doc_qa.conversations.store import delete_conversation
 
         ok = await delete_conversation(conversation_id)
         if not ok:
@@ -585,10 +648,7 @@ def create_app(
             raise HTTPException(status_code=503, detail="Too many concurrent queries")
 
         await _ensure_llm()
-        if sessions.db_enabled:
-            sid, session = await sessions.get_or_create_async(session_id)
-        else:
-            sid, session = sessions.get_or_create(session_id)
+        sid, session = await sessions.get_or_create_async(session_id)
 
         pipeline = _create_pipeline(session.history)
         pipeline._history = session.history
@@ -607,6 +667,7 @@ def create_app(
                         config=cfg,
                         session_id=sid,
                         conversation_id=session.conversation_id,
+                        query_cache=query_cache,
                     ):
                         yield event
                 except asyncio.CancelledError:
@@ -828,21 +889,6 @@ def create_app(
                     pass
                 logger.info("LLM backend reset due to config change")
 
-        # Database special case: if url changed, reinitialise engine
-        if "database" in body and cfg.database and cfg.database.url:
-            from doc_qa.db.engine import close_engine, get_database_url, init_engine
-
-            new_url = get_database_url(cfg.database.url)
-            if new_url:
-                try:
-                    await close_engine()
-                except Exception:
-                    pass
-                init_engine(new_url)
-                sessions.db_enabled = True
-                app.state.db_enabled = True
-                logger.info("Database engine re-initialised from config update")
-
         # Persist to disk
         save_config(cfg)
 
@@ -851,81 +897,6 @@ def create_app(
             "restart_required": len(restart_sections) > 0,
             "restart_sections": restart_sections,
         }
-
-    @app.post("/api/config/db/test")
-    async def test_db_connection(request: Request) -> dict:
-        """Test a database connection URL without persisting it."""
-        body = await request.json()
-        url = body.get("url", "")
-        if not url:
-            return {"ok": False, "error": "No URL provided"}
-
-        from doc_qa.db.engine import get_database_url
-
-        resolved = get_database_url(url)
-        if not resolved:
-            return {"ok": False, "error": "Could not resolve database URL"}
-
-        try:
-            from sqlalchemy.ext.asyncio import create_async_engine
-            from sqlalchemy import text
-
-            engine = create_async_engine(resolved, pool_pre_ping=True)
-            async with engine.connect() as conn:
-                await conn.execute(text("SELECT 1"))
-            await engine.dispose()
-            return {"ok": True}
-        except Exception as exc:
-            return {"ok": False, "error": str(exc)}
-
-    @app.post("/api/config/db/migrate")
-    async def run_db_migrations() -> dict:
-        """Run Alembic migrations (upgrade to head)."""
-        cfg = app.state.config
-        if not cfg.database or not cfg.database.url:
-            return {"ok": False, "error": "No database URL configured"}
-
-        from doc_qa.db.engine import get_database_url
-
-        db_url_resolved = get_database_url(cfg.database.url)
-        if not db_url_resolved:
-            return {"ok": False, "error": "Could not resolve database URL"}
-
-        try:
-            import functools
-            from alembic.config import Config as AlembicConfig
-            from alembic import command as alembic_command
-
-            alembic_ini = Path(__file__).resolve().parent.parent.parent / "alembic.ini"
-            alembic_cfg = AlembicConfig(str(alembic_ini))
-            # Override the URL so Alembic uses the resolved async URL
-            alembic_cfg.set_main_option("sqlalchemy.url", db_url_resolved)
-
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(
-                None,
-                functools.partial(alembic_command.upgrade, alembic_cfg, "head"),
-            )
-
-            # Read current revision from alembic_version table
-            current_rev: str | None = None
-            try:
-                from sqlalchemy import create_engine, text as sa_text
-
-                sync_url = db_url_resolved.replace("+asyncpg", "")
-                eng = create_engine(sync_url)
-                with eng.connect() as conn:
-                    row = conn.execute(sa_text("SELECT version_num FROM alembic_version LIMIT 1")).fetchone()
-                    if row:
-                        current_rev = row[0]
-                eng.dispose()
-            except Exception:
-                pass  # Non-critical — revision display is best-effort
-
-            return {"ok": True, "revision": current_rev}
-        except Exception as exc:
-            logger.exception("Migration failed")
-            return {"ok": False, "error": str(exc)}
 
     # ── Directory browse endpoint ────────────────────────────────────
 
@@ -1052,10 +1023,16 @@ def create_app(
         """Submit feedback (thumbs up/down) for a query."""
         from doc_qa.feedback.store import FeedbackRecord, save_feedback
 
+        # Look up cached query result to populate feedback fields
+        cached = query_cache.get(req.query_id)
         record = FeedbackRecord(
             query_id=req.query_id,
-            question="",  # filled from tracking if available
-            answer="",
+            question=cached.get("question", "") if cached else "",
+            answer=cached.get("answer", "") if cached else "",
+            chunks_used=cached.get("chunks_used", []) if cached else [],
+            scores=cached.get("scores", []) if cached else [],
+            confidence=cached.get("confidence", 0.0) if cached else 0.0,
+            verification_passed=cached.get("verification_passed") if cached else None,
             rating=req.rating,
             comment=req.comment,
         )
@@ -1100,7 +1077,7 @@ def create_app(
     app.state.index = index
     app.state.retriever = retriever
     app.state.sessions = sessions
-    app.state.db_enabled = sessions.db_enabled
     app.state.indexing_manager = indexing_manager
+    app.state.query_cache = query_cache
 
     return app

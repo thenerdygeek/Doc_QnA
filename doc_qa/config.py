@@ -30,8 +30,11 @@ class IndexingConfig:
     chunk_size: int = 512
     chunk_overlap: int = 50
     min_chunk_size: int = 100
-    embedding_model: str = "nomic-ai/nomic-embed-text-v1.5"
+    embedding_model: str = "auto"
     chunking_strategy: str = "paragraph"  # "paragraph" | "semantic"
+    enable_parent_child: bool = False
+    parent_chunk_size: int = 1024
+    child_chunk_size: int = 256
 
 
 @dataclass
@@ -53,6 +56,15 @@ class RetrievalConfig:
     recency_boost: float = 0.03
     enable_query_expansion: bool = False
     max_expansion_queries: int = 3
+    adaptive_min_score: bool = True
+    adaptive_std_factor: float = 1.0
+    adaptive_floor: float = 0.15
+    dynamic_top_k: bool = True
+    dynamic_max_k: int = 10
+    dynamic_gap_threshold: float = 0.10
+    enable_parent_retrieval: bool = True
+    enable_query_rewriting: bool = True
+    max_rewrite_history_turns: int = 4
 
 
 @dataclass
@@ -121,8 +133,15 @@ class StreamingConfig:
 
 
 @dataclass
-class DatabaseConfig:
-    url: str | None = None  # postgresql+asyncpg://user:pass@host:port/dbname
+class MultiHopConfig:
+    enable_multi_hop: bool = False
+    max_hops: int = 2
+
+
+@dataclass
+class FeedbackConfig:
+    enable_score_boost: bool = False
+    boost_max: float = 0.10
 
 
 @dataclass
@@ -138,7 +157,8 @@ class AppConfig:
     generation: GenerationConfig | None = None
     verification: VerificationConfig | None = None
     streaming: StreamingConfig | None = None
-    database: DatabaseConfig | None = None
+    multi_hop: MultiHopConfig | None = None
+    feedback: FeedbackConfig | None = None
 
 
 def _apply_dict(target: Any, data: dict[str, Any]) -> None:
@@ -223,9 +243,12 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         if "streaming" in raw:
             cfg.streaming = StreamingConfig()
             _apply_dict(cfg.streaming, raw["streaming"])
-        if "database" in raw:
-            cfg.database = DatabaseConfig()
-            _apply_dict(cfg.database, raw["database"])
+        if "multi_hop" in raw:
+            cfg.multi_hop = MultiHopConfig()
+            _apply_dict(cfg.multi_hop, raw["multi_hop"])
+        if "feedback" in raw:
+            cfg.feedback = FeedbackConfig()
+            _apply_dict(cfg.feedback, raw["feedback"])
 
     return cfg
 
@@ -235,7 +258,7 @@ UNSAFE_SECTIONS = frozenset({"indexing"})
 
 # Sections that are optional (may be None on AppConfig)
 _OPTIONAL_SECTIONS = frozenset(
-    {"intelligence", "generation", "verification", "streaming", "database"}
+    {"intelligence", "generation", "verification", "streaming", "multi_hop", "feedback"}
 )
 
 # Factory map for optional sections (name → default constructor)
@@ -244,7 +267,8 @@ _OPTIONAL_FACTORIES: dict[str, type] = {
     "generation": GenerationConfig,
     "verification": VerificationConfig,
     "streaming": StreamingConfig,
-    "database": DatabaseConfig,
+    "multi_hop": MultiHopConfig,
+    "feedback": FeedbackConfig,
 }
 
 

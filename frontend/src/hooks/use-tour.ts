@@ -29,14 +29,6 @@ export const TOUR_STEPS: TourStep[] = [
     required: true,
   },
   {
-    id: "database",
-    tab: "database",
-    title: "Database Setup",
-    description:
-      "Add a PostgreSQL connection to persist your conversation history. Enter the URL, test the connection, and run migrations. You can skip this and set it up later.",
-    required: false,
-  },
-  {
     id: "retrieval",
     tab: "retrieval",
     title: "Search Settings",

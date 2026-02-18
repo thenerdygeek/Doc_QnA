@@ -4,9 +4,11 @@ import type { SourceInfo, AttributionInfo } from "./api";
 
 export type PipelineStatus =
   | "classifying"
+  | "reformulating"
   | "retrieving"
   | "grading"
   | "generating"
+  | "reasoning"
   | "verifying"
   | "complete";
 
@@ -54,6 +56,7 @@ export interface SSEVerifiedData {
 export interface SSEDoneData {
   status: "complete";
   elapsed: number;
+  query_id?: string;
 }
 
 export interface SSEErrorData {
@@ -61,16 +64,35 @@ export interface SSEErrorData {
   type: string;
 }
 
+export interface SSERewriteData {
+  original: string;
+  rewritten: string;
+}
+
+export interface CitationInfo {
+  number: number;
+  chunk_id: string;
+  file_path: string;
+  section_title: string;
+  score: number;
+}
+
+export interface SSECitationsData {
+  citations: CitationInfo[];
+}
+
 // ── Discriminated union ──────────────────────────────────────────
 
 export type SSEEvent =
   | { event: "status"; data: SSEStatusData }
   | { event: "intent"; data: SSEIntentData }
+  | { event: "rewrite"; data: SSERewriteData }
   | { event: "sources"; data: SSESourcesData }
   | { event: "thinking_token"; data: SSEThinkingTokenData }
   | { event: "answer_token"; data: SSEAnswerTokenData }
   | { event: "answer"; data: SSEAnswerData }
   | { event: "attribution"; data: SSEAttributionData }
+  | { event: "citations"; data: SSECitationsData }
   | { event: "verified"; data: SSEVerifiedData }
   | { event: "done"; data: SSEDoneData }
   | { event: "error"; data: SSEErrorData };

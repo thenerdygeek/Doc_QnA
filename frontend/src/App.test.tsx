@@ -59,10 +59,6 @@ function makeSettingsMock(overrides: Record<string, unknown> = {}) {
     setOpen: vi.fn(),
     updateSection: vi.fn(),
     saving: false,
-    testDbConnection: vi.fn(),
-    dbTestResult: null,
-    runMigrations: vi.fn(),
-    migrateResult: null,
     restartRequired: [],
     ...overrides,
   };

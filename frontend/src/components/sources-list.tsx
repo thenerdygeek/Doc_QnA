@@ -6,6 +6,7 @@ import type { SourceInfo } from "@/types/api";
 
 interface SourcesListProps {
   sources: SourceInfo[];
+  highlightedSource?: number | null;
 }
 
 function scoreColor(score: number): string {
@@ -25,7 +26,7 @@ function fileName(filePath: string): string {
   return filePath.split("/").pop() ?? filePath;
 }
 
-export function SourcesList({ sources }: SourcesListProps) {
+export function SourcesList({ sources, highlightedSource }: SourcesListProps) {
   const [opening, setOpening] = useState<number | null>(null);
 
   if (sources.length === 0) return null;
@@ -62,6 +63,7 @@ export function SourcesList({ sources }: SourcesListProps) {
         {sources.map((source, i) => (
           <motion.button
             key={i}
+            id={`source-card-${i + 1}`}
             type="button"
             onClick={() => handleOpen(source.file_path, i)}
             initial={{ opacity: 0, y: 6 }}
@@ -69,7 +71,11 @@ export function SourcesList({ sources }: SourcesListProps) {
             transition={{ delay: i * 0.04, duration: 0.25 }}
             whileHover={{ y: -1, transition: { duration: 0.15 } }}
             whileTap={{ scale: 0.98 }}
-            className="group flex w-full cursor-pointer items-start gap-2 rounded-lg border border-border/60 bg-card/50 p-2.5 text-left transition-all hover:border-primary/40 hover:bg-primary/5 hover:shadow-md sm:gap-2.5 sm:p-3"
+            className={`group flex w-full cursor-pointer items-start gap-2 rounded-lg border bg-card/50 p-2.5 text-left transition-all hover:border-primary/40 hover:bg-primary/5 hover:shadow-md sm:gap-2.5 sm:p-3 ${
+              highlightedSource === i + 1
+                ? "border-primary/60 ring-2 ring-primary/20 bg-primary/5"
+                : "border-border/60"
+            }`}
           >
             <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary/8 transition-colors group-hover:bg-primary/15">
               <FileText className="h-3 w-3 text-primary" />

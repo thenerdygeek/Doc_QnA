@@ -19,9 +19,14 @@ def app_with_index(tmp_path: Path):
     from doc_qa.api.server import create_app
     from doc_qa.config import AppConfig
 
+    from doc_qa.indexing.model_selector import resolve_model_name
+
+    # Resolve the model so index and retriever use the same dimension
+    resolved_model = resolve_model_name("auto")
+
     # Create test docs and index
     index_dir = tmp_path / "data" / "doc_qa_db"
-    index = DocIndex(db_path=str(index_dir))
+    index = DocIndex(db_path=str(index_dir), embedding_model=resolved_model)
 
     docs = [
         ("auth.md", "Authentication", "OAuth 2.0 tokens authenticate users via identity provider."),
@@ -47,6 +52,7 @@ def app_with_index(tmp_path: Path):
     # Build config pointing to our test index
     config = AppConfig()
     config.indexing.db_path = str(index_dir)
+    config.indexing.embedding_model = resolved_model
 
     app = create_app(repo_path=str(tmp_path), config=config)
     return app

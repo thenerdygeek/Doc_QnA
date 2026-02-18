@@ -698,7 +698,10 @@ class TestQueryPipelineEdgeCases:
                 chunk_index=0,
             )
         ]
-        context = QueryPipeline._build_context(chunks)
+        # _build_context is an instance method — create minimal pipeline
+        pipeline = QueryPipeline.__new__(QueryPipeline)
+        pipeline._enable_parent_retrieval = False
+        context = pipeline._build_context(chunks)
         assert "test.md" in context
         assert "Content without section title." in context
         # Should not have ">" separator since section_title is empty

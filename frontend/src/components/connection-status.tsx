@@ -7,6 +7,7 @@ type Status = "connected" | "degraded" | "disconnected" | "checking";
 interface HealthDetails {
   indexOk: boolean;
   indexChunks: number;
+  embeddingModel?: string;
 }
 
 export function ConnectionStatus() {
@@ -25,8 +26,9 @@ export function ConnectionStatus() {
         const idx = data.components?.index;
         const indexOk = idx?.ok ?? false;
         const indexChunks = idx?.chunks ?? 0;
+        const embeddingModel = data.embedding_model?.resolved;
 
-        setDetails({ indexOk, indexChunks });
+        setDetails({ indexOk, indexChunks, embeddingModel });
 
         if (indexOk && indexChunks > 0) {
           setStatus("connected");
@@ -75,12 +77,15 @@ export function ConnectionStatus() {
   // Soften "Offline" → "Not connected" (less alarming for initial setup)
   const label = isOk ? "Connected" : isDegraded ? "Degraded" : "Not connected";
 
+  // Derive short model label: "nomic-ai/nomic-embed-text-v1.5" → "nomic-embed-text-v1.5"
+  const modelLabel = details?.embeddingModel?.split("/").pop() ?? "";
+
   const tooltipText = status === "disconnected"
     ? "Backend: Not connected — start the server to begin"
     : `Backend: Connected | Index: ${details && details.indexChunks > 0
       ? `${details.indexChunks.toLocaleString()} chunks`
       : "Empty"
-    }`;
+    }${modelLabel ? ` | Model: ${modelLabel}` : ""}`;
 
   return (
     <div

@@ -500,6 +500,49 @@ def compare_evaluations(
     )
 
 
+def save_report(summary: EvalSummary, path: str | Path, k: int = 5) -> None:
+    """Export evaluation metrics as JSON for CI comparison.
+
+    Args:
+        summary: The evaluation summary to export.
+        path: Output file path (JSON).
+        k: Cutoff rank used in evaluation.
+    """
+    report = {
+        "num_cases": summary.num_cases,
+        "k": k,
+        "metrics": {
+            "precision_at_k": round(summary.avg_precision, 4),
+            "recall_at_k": round(summary.avg_recall, 4),
+            "ndcg_at_k": round(summary.avg_ndcg, 4),
+            "f1_at_k": round(summary.avg_f1, 4),
+            "mrr": round(summary.mrr, 4),
+            "hit_rate": round(summary.hit_rate, 4),
+        },
+        "passed": summary.passed(),
+        "by_difficulty": [
+            {
+                "difficulty": bd.difficulty,
+                "count": bd.count,
+                "precision": round(bd.avg_precision, 4),
+                "recall": round(bd.avg_recall, 4),
+                "ndcg": round(bd.avg_ndcg, 4),
+                "f1": round(bd.avg_f1, 4),
+                "mrr": round(bd.mrr, 4),
+                "hit_rate": round(bd.hit_rate, 4),
+            }
+            for bd in summary.by_difficulty
+        ],
+    }
+
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
+
+    logger.info("Saved evaluation report to %s", out)
+
+
 def format_comparison(result: ComparisonResult, k: int = 5) -> str:
     """Format an A/B comparison result as a readable report.
 

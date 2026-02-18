@@ -242,41 +242,6 @@ describe("api.config", () => {
     );
   });
 
-  it("dbTest(url) returns {ok: true}", async () => {
-    mockFetch.mockResolvedValue(mockJsonResponse({ ok: true }));
-
-    const result = await api.config.dbTest("postgresql://localhost/mydb");
-    expect(result).toEqual({ ok: true });
-    expect(mockFetch).toHaveBeenCalledWith(
-      "/api/config/db/test",
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({ url: "postgresql://localhost/mydb" }),
-      }),
-    );
-  });
-
-  it("dbTest(url) failure returns {ok: false, error}", async () => {
-    const response = { ok: false, error: "Connection refused" };
-    mockFetch.mockResolvedValue(mockJsonResponse(response));
-
-    const result = await api.config.dbTest("postgresql://bad-host/db");
-    expect(result).toEqual(response);
-    expect(result.ok).toBe(false);
-    expect(result.error).toBe("Connection refused");
-  });
-
-  it("dbMigrate() returns {ok: true, revision}", async () => {
-    const response = { ok: true, revision: "abc123" };
-    mockFetch.mockResolvedValue(mockJsonResponse(response));
-
-    const result = await api.config.dbMigrate();
-    expect(result).toEqual(response);
-    expect(mockFetch).toHaveBeenCalledWith(
-      "/api/config/db/migrate",
-      expect.objectContaining({ method: "POST" }),
-    );
-  });
 });
 
 describe("error handling", () => {

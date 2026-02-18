@@ -153,6 +153,8 @@ def _make_pipeline(
         intelligence_config=intel,
         generation_config=gen,
         verification_config=verify,
+        adaptive_min_score=False,
+        dynamic_top_k=False,
     )
     pipeline._retriever.search = MagicMock(return_value=chunks)
     return pipeline

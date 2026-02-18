@@ -4,8 +4,6 @@ import { vi } from "vitest";
 import type {
   ConfigData,
   ConfigUpdateResponse,
-  DbTestResponse,
-  DbMigrateResponse,
 } from "@/types/api";
 
 vi.mock("@/api/client", () => ({
@@ -13,8 +11,6 @@ vi.mock("@/api/client", () => ({
     config: {
       get: vi.fn(),
       update: vi.fn(),
-      dbTest: vi.fn(),
-      dbMigrate: vi.fn(),
     },
   },
 }));
@@ -23,12 +19,9 @@ import { api } from "@/api/client";
 
 const mockConfigGet = vi.mocked(api.config.get);
 const mockConfigUpdate = vi.mocked(api.config.update);
-const mockDbTest = vi.mocked(api.config.dbTest);
-const mockDbMigrate = vi.mocked(api.config.dbMigrate);
 
 const FAKE_CONFIG: ConfigData = {
   llm: { provider: "cody", model: "claude-3" },
-  database: { url: "postgresql://localhost/test" },
 };
 
 const FAKE_UPDATE_RESPONSE: ConfigUpdateResponse = {
@@ -188,7 +181,7 @@ describe("useSettings", () => {
       .mockResolvedValueOnce({
         saved: true,
         restart_required: true,
-        restart_sections: ["database", "llm"],
+        restart_sections: ["indexing", "llm"],
       });
 
     const { result } = renderHook(() => useSettings());
@@ -206,12 +199,12 @@ describe("useSettings", () => {
     expect(result.current.restartRequired).toEqual(["llm"]);
 
     await act(async () => {
-      await result.current.updateSection("database", { url: "pg://new" });
+      await result.current.updateSection("indexing", { chunk_size: 256 });
     });
 
     // Set deduplicates "llm"
     expect(result.current.restartRequired).toContain("llm");
-    expect(result.current.restartRequired).toContain("database");
+    expect(result.current.restartRequired).toContain("indexing");
     expect(result.current.restartRequired.length).toBe(2);
   });
 
@@ -251,97 +244,6 @@ describe("useSettings", () => {
     });
 
     expect(result.current.saving).toBe(false);
-  });
-
-  it("testDbConnection calls api.config.dbTest with url", async () => {
-    const dbResult: DbTestResponse = { ok: true };
-    mockDbTest.mockResolvedValue(dbResult);
-
-    const { result } = renderHook(() => useSettings());
-
-    await act(async () => {
-      await result.current.testDbConnection("postgresql://localhost/db");
-    });
-
-    expect(mockDbTest).toHaveBeenCalledWith("postgresql://localhost/db");
-  });
-
-  it("DB test success: dbTestResult set to {ok: true}", async () => {
-    mockDbTest.mockResolvedValue({ ok: true });
-
-    const { result } = renderHook(() => useSettings());
-
-    await act(async () => {
-      await result.current.testDbConnection("postgresql://localhost/db");
-    });
-
-    expect(result.current.dbTestResult).toEqual({ ok: true });
-  });
-
-  it("DB test failure: dbTestResult set to {ok: false, error: '...'}", async () => {
-    mockDbTest.mockResolvedValue({ ok: false, error: "Connection refused" });
-
-    const { result } = renderHook(() => useSettings());
-
-    await act(async () => {
-      await result.current.testDbConnection("bad-url");
-    });
-
-    expect(result.current.dbTestResult).toEqual({
-      ok: false,
-      error: "Connection refused",
-    });
-  });
-
-  it("runMigrations calls api.config.dbMigrate", async () => {
-    const migrateResult: DbMigrateResponse = { ok: true, revision: "abc123" };
-    mockDbMigrate.mockResolvedValue(migrateResult);
-
-    const { result } = renderHook(() => useSettings());
-
-    await act(async () => {
-      await result.current.runMigrations();
-    });
-
-    expect(mockDbMigrate).toHaveBeenCalledTimes(1);
-  });
-
-  it("migrate result stored", async () => {
-    const migrateResult: DbMigrateResponse = { ok: true, revision: "abc123" };
-    mockDbMigrate.mockResolvedValue(migrateResult);
-
-    const { result } = renderHook(() => useSettings());
-
-    await act(async () => {
-      await result.current.runMigrations();
-    });
-
-    expect(result.current.migrateResult).toEqual(migrateResult);
-  });
-
-  it("previous dbTestResult cleared before new test", async () => {
-    mockDbTest
-      .mockResolvedValueOnce({ ok: true })
-      .mockImplementation(
-        () => new Promise(() => {}), // second call never resolves
-      );
-
-    const { result } = renderHook(() => useSettings());
-
-    await act(async () => {
-      await result.current.testDbConnection("url1");
-    });
-    expect(result.current.dbTestResult).toEqual({ ok: true });
-
-    // Start a second test (will not resolve)
-    act(() => {
-      void result.current.testDbConnection("url2");
-    });
-
-    // Result should be cleared immediately
-    await waitFor(() => {
-      expect(result.current.dbTestResult).toBeNull();
-    });
   });
 
   it("config fetch failure does not crash (stays null)", async () => {

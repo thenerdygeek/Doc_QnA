@@ -17,6 +17,7 @@ Your docs  ──►  Index (LanceDB)  ──►  Hybrid search  ──►  LLM 
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
   - [LLM Backend](#llm-backend)
+  - [Embedding Model](#embedding-model)
   - [Retrieval Settings](#retrieval-settings)
   - [Database (Optional)](#database-optional)
   - [Intelligence Features](#intelligence-features)
@@ -123,20 +124,26 @@ cd ..
 
 This produces an optimized SPA in `frontend/dist/`.
 
-### 5. Download the embedding model (one-time)
+### 5. Embedding model (automatic)
 
-The embedding model (~90 MB) is needed for indexing and search. It downloads automatically on first run, but if you're on a restricted network you can download it explicitly:
+The embedding model is needed for indexing and search. On startup, the server **auto-selects** the best model based on your system RAM:
+
+| RAM | Model Selected | Dimensions | Context |
+|-----|---------------|------------|---------|
+| >= 12 GB | Nomic Embed v1.5 | 768d | 8192 tokens |
+| < 12 GB | MiniLM L6 v2 | 384d | 256 tokens |
+
+The model downloads automatically on first run (~90 MB for MiniLM, ~524 MB for Nomic). You can override the auto-selection in `config.yaml` or from **Settings > Indexing** in the UI.
+
+If automatic download fails (corporate proxy, restricted network):
 
 ```bash
-doc-qa download-model
+doc-qa download-model                   # try GCS mirror
+doc-qa bundle-models                    # pre-download BOTH models for offline use
+doc-qa install-model /path/to/model.tar.gz   # install from a local file
 ```
 
-**If that also fails** (corporate proxy, restricted network), download via your browser and install:
-
-1. Download: https://storage.googleapis.com/qdrant-fastembed/sentence-transformers-all-MiniLM-L6-v2.tar.gz
-2. Run: `doc-qa install-model /path/to/sentence-transformers-all-MiniLM-L6-v2.tar.gz`
-
-The model is cached in `data/models/` inside the project — it only downloads once and works offline after that. See [Embedding Model Download Fails](#embedding-model-download-fails) for more details.
+The model is cached in `data/models/` — it only downloads once and works offline after that. See [Embedding Model Download Fails](#embedding-model-download-fails) for more details.
 
 ### 6. Start the server
 
@@ -201,6 +208,23 @@ ollama:
 4. Restart the server
 
 > Changing the LLM backend requires a server restart. The Settings UI will show a "Restart required" badge.
+
+### Embedding Model
+
+```yaml
+indexing:
+  embedding_model: "auto"   # "auto" | "nomic-ai/nomic-embed-text-v1.5" | "sentence-transformers/all-MiniLM-L6-v2"
+```
+
+| Value | Behavior |
+|-------|----------|
+| `auto` | Detect system RAM at startup and pick the best model (default) |
+| `nomic-ai/nomic-embed-text-v1.5` | Force Nomic (768d, 8192 token context, best quality) |
+| `sentence-transformers/all-MiniLM-L6-v2` | Force MiniLM (384d, 256 token context, low RAM) |
+
+Auto-detection uses a 12 GB RAM threshold — machines with >= 12 GB get Nomic, others get MiniLM. This can also be changed from the **Indexing** tab in the Settings dialog (dropdown selector).
+
+> **Dimension mismatch:** If you switch models after indexing, the server prints a warning at startup. Re-index your docs to use the new model's embeddings.
 
 ### Retrieval Settings
 
@@ -346,7 +370,7 @@ doc-qa serve [--repo /path/to/docs] [--host 127.0.0.1] [--port 8000]
 
 Starts a FastAPI server that serves both the API and the web UI. The `--repo` flag is optional — if omitted, the server falls back to `doc_repo.path` in `config.yaml`, or starts without a repo (configurable from the Settings UI).
 
-On startup, the server pre-downloads the embedding model if needed and then enables **offline mode** — no further internet calls are made (except for Cody/Ollama LLM backends).
+On startup, the server auto-selects and pre-downloads the embedding model based on system RAM, then enables **offline mode** — no further internet calls are made (except for Cody/Ollama LLM backends). If the selected model changes and a pre-existing index uses a different embedding dimension, a warning is printed.
 
 - **UI**: http://localhost:8000
 - **API docs (Swagger)**: http://localhost:8000/docs
@@ -379,6 +403,20 @@ The command handles everything automatically:
 3. Verifies the model loads and produces embeddings
 
 See [Embedding Model Download Fails](#embedding-model-download-fails) for the full workflow.
+
+### `bundle-models` — Pre-download both embedding models
+
+```bash
+doc-qa bundle-models
+```
+
+Downloads **both** MiniLM and Nomic embedding models into `data/models/`. Useful for:
+
+- Packaging the app before deploying to air-gapped or restricted-network machines
+- Ensuring the auto-select feature works regardless of which model is chosen at runtime
+- CI/CD pipelines that build a deployable artifact
+
+After bundling, copy the `data/models/` folder to the target machine.
 
 ### `eval` — Evaluate retrieval quality
 
@@ -502,6 +540,7 @@ The tour can be restarted anytime from the **"Take a Tour"** link at the bottom 
 - **Pluggable parsers** — registry pattern for document format support
 - **Phased streaming** — each pipeline step emits an SSE event for granular UI feedback
 - **Config hot-reload** — safe sections (retrieval, intelligence, verification) apply immediately; unsafe sections (LLM, indexing) require restart
+- **Auto-select embedding model** — detects system RAM and picks the best model (Nomic for 12 GB+, MiniLM for lower); both models bundleable for offline deployment
 - **Same-origin SPA** — FastAPI serves the built frontend; no CORS needed
 
 ---
@@ -516,7 +555,7 @@ The tour can be restarted anytime from the **"Take a Tour"** link at the bottom 
 | `GET` | `/api/query/stream?q=...&session_id=...` | Streaming Q&A (SSE) |
 | `POST` | `/api/retrieve` | Retrieval only (no LLM) |
 | `GET` | `/api/stats` | Index statistics |
-| `GET` | `/api/health` | Health check |
+| `GET` | `/api/health` | Health check (includes embedding model info) |
 
 ### Configuration
 
@@ -654,7 +693,8 @@ doc_qa_tool/
 │   │   ├── scanner.py          # File discovery with dedup
 │   │   ├── chunker.py          # Section-based text chunking
 │   │   ├── embedder.py         # fastembed integration
-│   │   └── indexer.py          # LanceDB vector store
+│   │   ├── indexer.py          # LanceDB vector store
+│   │   └── model_selector.py   # Auto-select embedding model by RAM
 │   ├── retrieval/
 │   │   ├── retriever.py        # Hybrid search (vector + BM25 + RRF)
 │   │   ├── reranker.py         # Cross-encoder reranking
@@ -688,6 +728,8 @@ doc_qa_tool/
 │   │   ├── asciidoc.py         # AsciiDoc parser
 │   │   ├── pdf.py              # PDF parser
 │   │   └── plantuml.py         # PlantUML parser
+│   ├── utils/
+│   │   └── system_info.py      # Cross-platform RAM detection
 │   └── db/
 │       ├── engine.py           # Async SQLAlchemy engine
 │       ├── models.py           # ORM models (Conversation, Message)
@@ -789,7 +831,7 @@ Make sure your documentation files match these patterns and aren't in excluded d
 
 ### Embedding model download fails
 
-The embedding model (`all-MiniLM-L6-v2`, ~90 MB) is required for indexing and search. On startup, `doc-qa serve` tries two automatic download methods:
+An embedding model is required for indexing and search. The server auto-selects between MiniLM (~90 MB) and Nomic (~524 MB) based on system RAM. On startup, it tries two automatic download methods:
 
 1. **HuggingFace Hub** (default fastembed behavior)
 2. **Google Cloud Storage** (fallback — more reliable on corporate networks)
@@ -840,17 +882,26 @@ export HTTPS_PROXY=http://your-proxy:8080
 doc-qa download-model
 ```
 
-#### Option C — Copy from another machine
+#### Option C — Bundle both models and copy
 
-If you have the model on another machine, copy the entire `data/models/` folder to the same location in the project on the new machine:
+On a machine with internet, pre-download both models:
+
+```bash
+doc-qa bundle-models
+```
+
+Then copy the entire `data/models/` folder to the target machine:
 
 ```
-<project-root>/data/models/fast-all-MiniLM-L6-v2/
-├── model.onnx          (~90 MB)
-├── config.json
-├── tokenizer.json
-├── special_tokens_map.json
-└── tokenizer_config.json
+<project-root>/data/models/
+├── fast-all-MiniLM-L6-v2/          # ~90 MB
+│   ├── model.onnx
+│   ├── config.json
+│   └── tokenizer.json
+└── fast-nomic-embed-text-v1.5/     # ~524 MB
+    ├── model.onnx
+    ├── config.json
+    └── tokenizer.json
 ```
 
 ### Corrupt embedding model cache
@@ -893,10 +944,12 @@ After `doc-qa serve` starts successfully, the tool operates **fully offline** �
 
 The embedding model, index, and all retrieval happen locally. To set up for a fully offline environment:
 
-1. Run `doc-qa download-model` once with internet
+1. Run `doc-qa bundle-models` once with internet (downloads both MiniLM and Nomic)
 2. Index your docs: `doc-qa index /path/to/docs`
 3. Disconnect from internet
 4. Run `doc-qa serve` — works offline (use Ollama for fully local LLM)
+
+To deploy to air-gapped machines, copy the `data/models/` folder after running `bundle-models`.
 
 ---
 
