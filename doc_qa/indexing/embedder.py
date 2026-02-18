@@ -193,13 +193,13 @@ def _get_model(model_name: str = "nomic-ai/nomic-embed-text-v1.5") -> object:
 
         import time as _time
         logger.info("Loading embedding model: %s (cache: %s)", model_name, cache_dir)
-        logger.info("[PERF] HF_HUB_OFFLINE=%s TRANSFORMERS_OFFLINE=%s",
+        logger.warning("[PERF] HF_HUB_OFFLINE=%s TRANSFORMERS_OFFLINE=%s",
                     os.environ.get("HF_HUB_OFFLINE", "unset"),
                     os.environ.get("TRANSFORMERS_OFFLINE", "unset"))
         _t0 = _time.time()
         _model = TextEmbedding(model_name, cache_dir=cache_dir)
         _model_name = model_name
-        logger.info("[PERF] Model loaded in %.1fs", _time.time() - _t0)
+        logger.warning("[PERF] Model loaded in %.1fs", _time.time() - _t0)
         return _model
 
 

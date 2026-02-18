@@ -291,7 +291,7 @@ class DocIndex:
         import time as _time
         _t0 = _time.time()
         vectors = embed_texts(texts, model_name=self._embedding_model)
-        logger.info("[PERF] Embedding %d chunks: %.2fs (%.0f chunks/sec)",
+        logger.warning("[PERF] Embedding %d chunks: %.2fs (%.0f chunks/sec)",
                     len(texts), _time.time() - _t0,
                     len(texts) / max(_time.time() - _t0, 0.001))
 
@@ -326,7 +326,7 @@ class DocIndex:
 
         _t1 = _time.time()
         self._table.add(records)
-        logger.info("[PERF] DB insert %d records: %.2fs", len(records), _time.time() - _t1)
+        logger.warning("[PERF] DB insert %d records: %.2fs", len(records), _time.time() - _t1)
         n_files = len(set(_normalize_path(c.file_path) for c in chunks))
         logger.info("Added %d chunks from %d file(s).", len(records), n_files)
         return len(records)
