@@ -797,14 +797,14 @@ def main() -> None:
     # Console: respect --log-level (default WARNING to keep terminal clean)
     console_level = getattr(logging, args.log_level)
     logging.basicConfig(
-        level=min(console_level, logging.DEBUG),  # root at DEBUG so file handler captures all
+        level=console_level,
         format="%(asctime)s [%(levelname)-8s] %(name)s — %(message)s",
     )
     # Set console handler to the user-requested level
     for handler in logging.root.handlers:
         handler.setLevel(console_level)
 
-    # File handler: always DEBUG — captures everything for diagnostics
+    # File handler: WARNING+ only (includes [PERF] tags and real issues)
     log_dir = Path("logs")
     log_dir.mkdir(exist_ok=True)
     from logging.handlers import RotatingFileHandler
@@ -814,7 +814,7 @@ def main() -> None:
         backupCount=3,
         encoding="utf-8",
     )
-    file_handler.setLevel(logging.DEBUG)
+    file_handler.setLevel(logging.WARNING)
     file_handler.setFormatter(logging.Formatter(
         "%(asctime)s [%(levelname)-8s] %(name)s — %(message)s"
     ))
