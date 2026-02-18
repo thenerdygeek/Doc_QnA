@@ -288,7 +288,12 @@ class DocIndex:
 
         # Embed all chunk texts in one batch (much faster than per-file)
         texts = [c.text for c in chunks]
+        import time as _time
+        _t0 = _time.time()
         vectors = embed_texts(texts, model_name=self._embedding_model)
+        logger.info("[PERF] Embedding %d chunks: %.2fs (%.0f chunks/sec)",
+                    len(texts), _time.time() - _t0,
+                    len(texts) / max(_time.time() - _t0, 0.001))
 
         # Resolve hash per chunk
         if isinstance(file_hash, str):
@@ -319,7 +324,9 @@ class DocIndex:
                 "parent_text": chunk.parent_text,
             })
 
+        _t1 = _time.time()
         self._table.add(records)
+        logger.info("[PERF] DB insert %d records: %.2fs", len(records), _time.time() - _t1)
         n_files = len(set(_normalize_path(c.file_path) for c in chunks))
         logger.info("Added %d chunks from %d file(s).", len(records), n_files)
         return len(records)

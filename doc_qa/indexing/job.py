@@ -213,7 +213,9 @@ class IndexingJob:
           try:
             # ── Phase 1: Scanning ────────────────────────────
             self._set_state(IndexingState.scanning)
+            t0 = time.time()
             all_files = await loop.run_in_executor(None, scan_files, self.config.doc_repo)
+            logger.info("[PERF] Scan: %.1fs — %d files found", time.time() - t0, len(all_files))
             self._check_cancelled()
 
             # ── Incremental change detection ─────────────────
@@ -347,6 +349,9 @@ class IndexingJob:
                     # Submit a batch of files for parallel parsing
                     batch_end = min(batch_start + _EMBED_BATCH_SIZE, len(files_to_process))
                     batch_files = files_to_process[batch_start:batch_end]
+                    t_batch_start = time.time()
+                    logger.info("[PERF] Batch %d-%d of %d files starting",
+                                batch_start, batch_end, len(files_to_process))
 
                     # Submit to thread pool and wrap as asyncio futures
                     # so we can await them without blocking the event loop.
@@ -426,7 +431,12 @@ class IndexingJob:
                     # Bulk embed + insert — sub-batched to control memory.
                     # A batch of 50 PDFs could produce 30K+ chunks; embedding
                     # all at once would use ~300+ MB for Python float lists.
+                    t_parse_done = time.time()
+                    logger.info("[PERF] Batch %d-%d parse+chunk done in %.1fs (%d chunks from %d files)",
+                                batch_start, batch_end, t_parse_done - t_batch_start,
+                                len(batch_chunks), len(batch_files))
                     if batch_chunks:
+                        t_embed_start = time.time()
                         await loop.run_in_executor(
                             None,
                             _bulk_add_chunks,
@@ -435,7 +445,12 @@ class IndexingJob:
                             batch_hashes,
                             batch_dates,
                         )
+                        logger.info("[PERF] Batch %d-%d embed+insert done in %.1fs (%d chunks)",
+                                    batch_start, batch_end, time.time() - t_embed_start,
+                                    len(batch_chunks))
 
+                    logger.info("[PERF] Batch %d-%d total: %.1fs",
+                                batch_start, batch_end, time.time() - t_batch_start)
                     batch_start = batch_end
             finally:
                 executor.shutdown(wait=False, cancel_futures=True)
@@ -443,7 +458,9 @@ class IndexingJob:
             # ── Phase 3: Rebuild FTS ─────────────────────────
             self._check_cancelled()
             self._set_state(IndexingState.rebuilding_fts)
+            t_fts = time.time()
             await loop.run_in_executor(None, temp_index.rebuild_fts_index)
+            logger.info("[PERF] FTS rebuild: %.1fs", time.time() - t_fts)
 
             # ── Phase 4: Atomic swap ─────────────────────────
             self._check_cancelled()
@@ -516,10 +533,16 @@ def _parse_and_chunk(
     one ``add_chunks`` call.
     """
     try:
+        t_start = time.time()
+
+        t0 = time.time()
         sections = parse_file(file_path)
+        t_parse = time.time() - t0
         if not sections:
+            logger.info("[PERF] File %s — parse=%.2fs (no sections, skipped)", file_path, t_parse)
             return {"chunks": [], "sections": 0, "skipped": True, "file_hash": ""}
 
+        t0 = time.time()
         if enable_parent_child:
             from doc_qa.indexing.chunker import chunk_sections_parent_child
             chunks = chunk_sections_parent_child(
@@ -542,11 +565,19 @@ def _parse_and_chunk(
                 chunking_strategy=chunking_strategy,
                 embedding_model=embedding_model,
             )
+        t_chunk = time.time() - t0
+
         if not chunks:
+            logger.info("[PERF] File %s — parse=%.2fs chunk=%.2fs (0 chunks, skipped)", file_path, t_parse, t_chunk)
             return {"chunks": [], "sections": len(sections), "skipped": True, "file_hash": ""}
 
         file_hash = _compute_file_hash(file_path)
         doc_date = extract_doc_date(file_path)
+        t_total = time.time() - t_start
+        logger.info(
+            "[PERF] File %s — parse=%.2fs chunk=%.2fs total=%.2fs (%d sections, %d chunks, strategy=%s)",
+            file_path, t_parse, t_chunk, t_total, len(sections), len(chunks), chunking_strategy,
+        )
         return {
             "chunks": chunks,
             "sections": len(sections),
