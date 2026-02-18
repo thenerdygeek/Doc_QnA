@@ -626,6 +626,13 @@ def cmd_serve(args: argparse.Namespace) -> None:
 
     config = load_config(Path(args.config) if args.config else None)
 
+    # ── Enable HuggingFace offline mode if bundled models exist ──
+    # Prevents 30-60s connection timeouts per file when WiFi is off.
+    _models_dir = Path(__file__).resolve().parent.parent / "data" / "models"
+    if _models_dir.is_dir() and any(_models_dir.iterdir()):
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+        print("  Bundled models found — HuggingFace offline mode enabled")
+
     # ── Resolve "auto" to a concrete model name ──
     raw_model = config.indexing.embedding_model
     resolved_model = resolve_model_name(raw_model)
